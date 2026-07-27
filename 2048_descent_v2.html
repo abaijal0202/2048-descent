@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>2048 Descent</title>
+<style>
+  :root{
+    --bg-deep:#131625;
+    --bg-panel:#1c2138;
+    --bg-panel-2:#242a47;
+    --accent-cyan:#5eead4;
+    --accent-pink:#f472b6;
+    --text-light:#f4f6fb;
+    --text-muted:#8b93b0;
+    --board-bg:#0d1020;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color: transparent;}
+  html,body{height:100%; overflow:hidden;}
+  body{
+    margin:0;
+    background: radial-gradient(circle at 50% 0%, #1a1f3a 0%, var(--bg-deep) 55%);
+    color:var(--text-light);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display:flex; align-items:center; justify-content:center;
+    padding: env(safe-area-inset-top) 8px env(safe-area-inset-bottom);
+    touch-action: manipulation;
+  }
+  .wrap{
+    width:100%; max-width:400px; height:100%;
+    display:flex; flex-direction:column; gap:6px;
+    justify-content:center;
+    position:relative;
+  }
+  .titlebar{display:flex;align-items:center;justify-content:space-between;padding:0 2px;}
+  .titlebar h1{
+    font-size:17px;margin:0;font-weight:800;letter-spacing:0.5px;
+    background: linear-gradient(90deg, var(--accent-cyan), var(--accent-pink));
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .help-btn{
+    width:24px;height:24px;border-radius:50%;
+    background:var(--bg-panel-2);border:1px solid rgba(255,255,255,0.08);
+    color:var(--text-muted);font-size:12px;font-weight:700;
+    display:flex;align-items:center;justify-content:center;cursor:pointer;flex:none;
+  }
+  .score-row{
+    display:flex;justify-content:space-between;align-items:center;
+    background:var(--bg-panel);border-radius:10px;padding:6px 11px;
+    font-size:11px;color:var(--text-muted);border:1px solid rgba(255,255,255,0.05);
+  }
+  .score-val{color:var(--text-light);font-weight:700;font-size:14px;margin-left:5px;}
+  .meta-row{display:flex;justify-content:space-between;align-items:center;gap:6px;}
+  .next-panel{
+    display:flex;align-items:center;gap:5px;
+    background:var(--bg-panel);border-radius:10px;padding:5px 9px;
+    border:1px solid rgba(255,255,255,0.05);flex:1;
+  }
+  .next-panel .lbl{font-size:9px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.6px;}
+  .next-tile{
+    width:24px;height:24px;border-radius:6px;
+    display:flex;align-items:center;justify-content:center;
+    font-size:10px;font-weight:800;
+  }
+  .speed-badge{
+    background:var(--bg-panel);border-radius:10px;padding:5px 9px;
+    font-size:10px;color:var(--accent-cyan);
+    border:1px solid rgba(94,234,212,0.25);font-weight:700;white-space:nowrap;
+  }
+  .board-frame{
+    position:relative;align-self:center;
+    border-radius:14px;padding:6px;
+    background: linear-gradient(160deg, var(--bg-panel-2), var(--bg-panel));
+    border:1px solid rgba(255,255,255,0.06);
+    box-shadow: 0 18px 36px -20px rgba(0,0,0,0.6);
+  }
+  canvas#board{display:block;border-radius:9px;background:var(--board-bg);touch-action:none;}
+  .overlay{
+    position:absolute;inset:6px;border-radius:9px;
+    background:rgba(10,12,24,0.88);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    text-align:center;gap:12px;padding:18px;
+  }
+  .overlay h2{margin:0;font-size:20px;font-weight:800;}
+  .overlay p{margin:0;color:var(--text-muted);font-size:12px;line-height:1.5;max-width:250px;}
+  .overlay.hidden{display:none;}
+  .btn{
+    border:none;border-radius:9px;padding:9px 20px;
+    font-size:13px;font-weight:700;cursor:pointer;
+    background: linear-gradient(90deg, var(--accent-cyan), var(--accent-pink));
+    color:#101225;
+  }
+  .btn:active{transform:scale(0.97);}
+  .celebrate h2{
+    background: linear-gradient(90deg, #facc15, var(--accent-pink));
+    -webkit-background-clip:text;background-clip:text;color:transparent;font-size:24px;
+  }
+  .powers-row{display:flex;gap:6px;}
+  .power-btn{
+    flex:1;display:flex;flex-direction:column;align-items:center;gap:1px;
+    background:var(--bg-panel);border:1px solid rgba(255,255,255,0.06);
+    border-radius:10px;padding:6px 4px;color:var(--text-light);cursor:pointer;user-select:none;
+  }
+  .power-btn .p-icon{font-size:14px;line-height:1.1;}
+  .power-btn .p-label{font-size:9px;color:var(--text-muted);font-weight:600;letter-spacing:0.3px;}
+  .power-btn .p-stock{font-size:11px;font-weight:800;color:var(--accent-cyan);}
+  .power-btn .p-timer{font-size:8px;color:var(--text-muted);}
+  .power-btn.disabled{opacity:0.4;}
+  .power-btn.slow-active{border-color:var(--accent-cyan);box-shadow:0 0 0 1px var(--accent-cyan) inset;}
+  .controls-row{display:flex;gap:6px;align-items:center;justify-content:center;}
+  .ctrl-btn{
+    flex:1;height:46px;border-radius:11px;
+    border:1px solid rgba(255,255,255,0.06);background:var(--bg-panel);
+    color:var(--text-light);font-size:17px;
+    display:flex;align-items:center;justify-content:center;cursor:pointer;user-select:none;
+  }
+  .ctrl-btn:active{background:var(--bg-panel-2);}
+  .ctrl-btn.wide{flex:1.4;font-size:12px;font-weight:700;letter-spacing:0.4px;}
+  .help-modal{
+    position:fixed;inset:0;background:rgba(6,7,14,0.86);
+    display:flex;align-items:center;justify-content:center;z-index:50;padding:20px;
+  }
+  .help-modal.hidden{display:none;}
+  .help-card{
+    background:var(--bg-panel);border-radius:14px;padding:18px;
+    max-width:330px;max-height:80vh;overflow-y:auto;
+    border:1px solid rgba(255,255,255,0.08);
+  }
+  .help-card h3{margin-top:0;font-size:15px;}
+  .help-card ul{padding-left:16px;margin:8px 0;font-size:12px;color:var(--text-muted);line-height:1.55;}
+  .help-card li b{color:var(--text-light);}
+  .foot-note{text-align:center;font-size:9.5px;color:var(--text-muted);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="titlebar">
+    <h1>2048 DESCENT</h1>
+    <div class="help-btn" id="helpBtn">?</div>
+  </div>
+
+  <div class="score-row">
+    <span>SCORE<span class="score-val" id="scoreVal">0</span></span>
+    <span>BEST TILE <span class="score-val" id="bestTileVal">—</span></span>
+  </div>
+
+  <div class="meta-row">
+    <div class="next-panel">
+      <span class="lbl">Next</span>
+      <div class="next-tile" id="n0"></div>
+      <div class="next-tile" id="n1"></div>
+      <div class="next-tile" id="n2"></div>
+    </div>
+    <div class="speed-badge" id="speedBadge">SPEED x1.00</div>
+  </div>
+
+  <div class="board-frame">
+    <canvas id="board"></canvas>
+    <div class="overlay" id="startOverlay">
+      <h2>2048 DESCENT</h2>
+      <p>Drag the falling number left or right. Matching numbers merge when they touch — sideways as well as down. Swipe down to drop fast.</p>
+      <button class="btn" id="startBtn">Start Game</button>
+    </div>
+    <div class="overlay hidden celebrate" id="winOverlay">
+      <h2>2048! 🏆</h2>
+      <p>The board clears and your 2048 locks into the corner. Speed ramps up — keep going!</p>
+    </div>
+    <div class="overlay hidden" id="overOverlay">
+      <h2>Game Over</h2>
+      <p id="overStats">Score: 0</p>
+      <button class="btn" id="restartBtn">Play Again</button>
+    </div>
+  </div>
+
+  <div class="powers-row">
+    <div class="power-btn" id="pwrDelete">
+      <div class="p-icon">▬✕</div>
+      <div class="p-label">DELETE ROW</div>
+      <div class="p-stock" id="delStock">3/3</div>
+      <div class="p-timer" id="delTimer">&nbsp;</div>
+    </div>
+    <div class="power-btn" id="pwrSlow">
+      <div class="p-icon">🐢</div>
+      <div class="p-label">SLOW 30s</div>
+      <div class="p-stock" id="slowStock">3/3</div>
+      <div class="p-timer" id="slowTimer">&nbsp;</div>
+    </div>
+  </div>
+
+  <div class="controls-row">
+    <div class="ctrl-btn" id="btnLeft">◀</div>
+    <div class="ctrl-btn" id="btnDown">▼</div>
+    <div class="ctrl-btn" id="btnRight">▶</div>
+    <div class="ctrl-btn wide" id="btnHard">DROP</div>
+  </div>
+
+  <div class="foot-note">Drag on the board, or use the buttons · Space = drop</div>
+</div>
+
+<div class="help-modal hidden" id="helpModal">
+  <div class="help-card">
+    <h3>How to play</h3>
+    <ul>
+      <li><b>Move:</b> drag your finger across the board to slide the falling number between columns, or use the arrow buttons.</li>
+      <li><b>Drop:</b> swipe down on the board, tap DROP, or press Space.</li>
+      <li><b>Merge:</b> equal numbers combine whenever they end up touching — above/below <i>or</i> left/right. Merges chain until nothing else matches.</li>
+      <li><b>Speed:</b> crossing 512, 1024 and 2048 each add +20% fall speed.</li>
+      <li><b>2048:</b> the first 2048 clears the board and locks into the bottom-left corner as a permanent trophy.</li>
+      <li><b>Delete Row:</b> clears the lowest row and settles everything down. 3 charges, +1 every 30 min.</li>
+      <li><b>Slow:</b> reduces fall speed for 30 seconds. 3 charges, +1 every 30 min.</li>
+    </ul>
+    <button class="btn" id="closeHelp">Got it</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---------- tunables ----------
+  const COLS = 7, ROWS = 13;
+  const BASE_INTERVAL = 750;
+  const REGEN_MS = 30 * 60 * 1000;
+  const SLOW_DURATION = 30 * 1000;
+  const SLOW_FACTOR = 1.8;
+  const START_COL = Math.floor(COLS/2);
+  const SPAWN_TABLE = [[2,35],[4,30],[8,15],[16,10],[32,6],[64,4]];
+  // MERGE_HORIZONTAL=false reverts to vertical-only merging (the v1 behaviour)
+  const MERGE_HORIZONTAL = true;
+
+  const REDUCED_MOTION = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const BLOCK_COLORS = {
+    2:{bg:'#6ee7b7',text:'#0b3b2e'},   4:{bg:'#5eead4',text:'#0b3b36'},
+    8:{bg:'#38bdf8',text:'#082a3d'},   16:{bg:'#818cf8',text:'#1a1a45'},
+    32:{bg:'#a78bfa',text:'#241a45'},  64:{bg:'#e879f9',text:'#3d0a3d'},
+    128:{bg:'#f472b6',text:'#3d0a22'}, 256:{bg:'#fb7185',text:'#3d0a10'},
+    512:{bg:'#fb923c',text:'#3d1a00'}, 1024:{bg:'#fbbf24',text:'#3d2a00'},
+    2048:{bg:'#facc15',text:'#3d3000'}
+  };
+  function colorFor(v){ return BLOCK_COLORS[v] || {bg:'#f4f6fb',text:'#131625'}; }
+
+  // ---------- state ----------
+  function emptyGrid(){
+    const g=[]; for(let r=0;r<ROWS;r++) g.push(new Array(COLS).fill(null)); return g;
+  }
+  function freshState(){
+    return {
+      grid: emptyGrid(), falling:null, queue:[],
+      score:0, bestTile:0, speedMultiplier:1,
+      flags:{p512:false,p1024:false,p2048:false},
+      slowActive:false, slowExpiresAt:0, softDrop:false,
+      celebrating:false, celebrateUntil:0,
+      gameOver:false, started:false, lastTick:0,
+      powers:{ del:{stock:3,nextRegenAt:null}, slow:{stock:3,nextRegenAt:null} }
+    };
+  }
+  let state = freshState();
+
+  function weightedRandom(){
+    const total = SPAWN_TABLE.reduce((s,p)=>s+p[1],0);
+    let r = Math.random()*total;
+    for(const [v,w] of SPAWN_TABLE){ if(r<w) return v; r-=w; }
+    return SPAWN_TABLE[0][0];
+  }
+  function initQueue(){ state.queue=[weightedRandom(),weightedRandom(),weightedRandom()]; }
+
+  function spawnNext(){
+    if(state.grid[0][START_COL]){ triggerGameOver(); return; }
+    const val = state.queue.shift();
+    state.queue.push(weightedRandom());
+    state.falling = {col:START_COL, row:0, value:val};
+  }
+
+  // ---------- gravity (identity preserving, so tiles can be tracked) ----------
+  function settleGravity(){
+    for(let c=0;c<COLS;c++){
+      let lockedRow=null;
+      for(let r=0;r<ROWS;r++){ if(state.grid[r][c] && state.grid[r][c].locked){ lockedRow=r; break; } }
+      const floor = lockedRow!==null ? lockedRow-1 : ROWS-1;
+      const stack=[];
+      for(let r=0;r<=floor;r++){ if(state.grid[r][c]){ stack.push(state.grid[r][c]); state.grid[r][c]=null; } }
+      let idx=floor;
+      for(let i=stack.length-1;i>=0;i--){ state.grid[idx][c]=stack[i]; idx--; }
+    }
+  }
+
+  // ---------- merging ----------
+  function mergeable(a,b){ return a && b && !a.locked && !b.locked && a.value===b.value; }
+
+  function findAndApplyOneMerge(active){
+    // vertical first, scanning bottom-up: the lower tile absorbs the one above
+    for(let r=ROWS-1;r>0;r--){
+      for(let c=0;c<COLS;c++){
+        const lo=state.grid[r][c], hi=state.grid[r-1][c];
+        if(mergeable(lo,hi)){
+          lo.value*=2; state.grid[r-1][c]=null;
+          lo.pop = performance.now();
+          state.score+=lo.value; checkMilestone(lo.value);
+          return lo;
+        }
+      }
+    }
+    if(!MERGE_HORIZONTAL) return null;
+    // then horizontal, bottom-up
+    for(let r=ROWS-1;r>=0;r--){
+      for(let c=0;c<COLS-1;c++){
+        const a=state.grid[r][c], b=state.grid[r][c+1];
+        if(mergeable(a,b)){
+          const aSup=(r===ROWS-1)||!!state.grid[r+1][c];
+          const bSup=(r===ROWS-1)||!!state.grid[r+1][c+1];
+          let keep,keepC,dropC;
+          if(active && b===active){ keep=b; keepC=c+1; dropC=c; }
+          else if(active && a===active){ keep=a; keepC=c; dropC=c+1; }
+          else if(aSup && !bSup){ keep=a; keepC=c; dropC=c+1; }
+          else if(bSup && !aSup){ keep=b; keepC=c+1; dropC=c; }
+          else { keep=a; keepC=c; dropC=c+1; }
+          state.grid[r][dropC]=null; state.grid[r][keepC]=keep;
+          keep.value*=2; keep.pop = performance.now();
+          state.score+=keep.value; checkMilestone(keep.value);
+          return keep;
+        }
+      }
+    }
+    return null;
+  }
+
+  // Settle, then repeatedly merge any touching equal pair until the board is stable.
+  function resolveBoard(active){
+    let guard=0;
+    while(guard++ < 400){
+      settleGravity();
+      if(state.celebrating) return;
+      const merged = findAndApplyOneMerge(active);
+      if(!merged) break;
+      active = merged;
+      if(state.celebrating) return;
+    }
+    settleGravity();
+  }
+
+  function checkMilestone(value){
+    const f=state.flags;
+    if(value>=512 && !f.p512){ f.p512=true; state.speedMultiplier*=1.2; }
+    if(value>=1024 && !f.p1024){ f.p1024=true; state.speedMultiplier*=1.2; }
+    if(value>=2048 && !f.p2048){ f.p2048=true; state.speedMultiplier*=1.2; triggerWinEvent(); }
+    if(value>state.bestTile) state.bestTile=value;
+  }
+
+  function triggerWinEvent(){
+    state.celebrating=true;
+    state.celebrateUntil=Date.now()+2200;
+    document.getElementById('winOverlay').classList.remove('hidden');
+    state.grid = emptyGrid();
+    state.grid[ROWS-1][0] = {value:2048, locked:true};
+  }
+
+  function land(){
+    const {row,col,value} = state.falling;
+    const tile = {value:value, locked:false, pop:performance.now()};
+    state.grid[row][col] = tile;
+    state.falling = null;
+    resolveBoard(tile);
+    if(!state.celebrating) spawnNext();
+  }
+
+  // ---------- powers ----------
+  function useDeleteRowPower(){
+    if(!state.started || state.gameOver || state.celebrating) return;
+    if(state.powers.del.stock<=0) return;
+    state.powers.del.stock--;
+    if(state.powers.del.nextRegenAt===null) state.powers.del.nextRegenAt=Date.now()+REGEN_MS;
+    let target=-1;
+    for(let r=ROWS-1;r>=0;r--){
+      for(let c=0;c<COLS;c++){
+        if(state.grid[r][c] && !state.grid[r][c].locked){ target=r; break; }
+      }
+      if(target>=0) break;
+    }
+    if(target>=0){
+      for(let c=0;c<COLS;c++){
+        if(state.grid[target][c] && !state.grid[target][c].locked) state.grid[target][c]=null;
+      }
+      resolveBoard(null);
+    }
+    updatePowerUI();
+  }
+
+  function useSlowPower(){
+    if(!state.started || state.gameOver || state.celebrating) return;
+    if(state.powers.slow.stock<=0) return;
+    state.powers.slow.stock--;
+    if(state.powers.slow.nextRegenAt===null) state.powers.slow.nextRegenAt=Date.now()+REGEN_MS;
+    state.slowActive=true;
+    state.slowExpiresAt=Date.now()+SLOW_DURATION;
+    updatePowerUI();
+  }
+
+  function moveFalling(dir){ setColumn(state.falling ? state.falling.col+dir : 0); }
+
+  function setColumn(newCol){
+    if(!state.falling || state.gameOver || state.celebrating || !state.started) return;
+    newCol = Math.max(0, Math.min(COLS-1, newCol));
+    const cur = state.falling.col;
+    if(newCol===cur) return;
+    const step = newCol>cur ? 1 : -1;
+    // walk one column at a time so we can't tunnel through an occupied cell
+    let c = cur;
+    while(c!==newCol){
+      const nxt=c+step;
+      if(state.grid[state.falling.row][nxt]) break;
+      c=nxt;
+    }
+    state.falling.col=c;
+  }
+
+  function hardDrop(){
+    if(!state.falling || state.gameOver || state.celebrating || !state.started) return;
+    let r=state.falling.row;
+    while(r+1<ROWS && !state.grid[r+1][state.falling.col]) r++;
+    state.falling.row=r;
+    land();
+  }
+
+  function triggerGameOver(){
+    state.gameOver=true; state.falling=null;
+    document.getElementById('overStats').textContent='Score: '+state.score+' · Best tile: '+(state.bestTile||0);
+    document.getElementById('overOverlay').classList.remove('hidden');
+  }
+
+  // ---------- loop ----------
+  function getEffectiveInterval(){
+    let i = BASE_INTERVAL/state.speedMultiplier;
+    if(state.slowActive) i*=SLOW_FACTOR;
+    if(state.softDrop) i/=6;
+    return Math.max(i,45);
+  }
+
+  function tick(now){
+    if(!state.started || state.gameOver) return;
+    if(state.slowActive && Date.now()>=state.slowExpiresAt) state.slowActive=false;
+    if(state.celebrating){
+      if(Date.now()>=state.celebrateUntil){
+        state.celebrating=false;
+        document.getElementById('winOverlay').classList.add('hidden');
+        spawnNext();
+      }
+      return;
+    }
+    if(!state.falling) return;
+    if(now - state.lastTick >= getEffectiveInterval()){
+      state.lastTick = now;
+      const r=state.falling.row, c=state.falling.col;
+      if(r+1>=ROWS || state.grid[r+1][c]) land();
+      else state.falling.row = r+1;
+    }
+  }
+
+  // ---------- responsive canvas ----------
+  const canvas = document.getElementById('board');
+  const ctx = canvas.getContext('2d');
+  let CELL = 40;
+
+  function fitBoard(){
+    const wrap = document.querySelector('.wrap');
+    const availW = Math.min(wrap.clientWidth, 400) - 28;
+    // reserve room for title, score, next row, powers and controls
+    const reserved = 250;
+    const availH = window.innerHeight - reserved;
+    CELL = Math.floor(Math.min(availW/COLS, availH/ROWS));
+    CELL = Math.max(18, Math.min(CELL, 44));
+
+    const dpr = Math.min(window.devicePixelRatio||1, 2);
+    canvas.width  = COLS*CELL*dpr;
+    canvas.height = ROWS*CELL*dpr;
+    canvas.style.width  = (COLS*CELL)+'px';
+    canvas.style.height = (ROWS*CELL)+'px';
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+  window.addEventListener('resize', fitBoard);
+  window.addEventListener('orientationchange', ()=>setTimeout(fitBoard,150));
+
+  function roundRect(x,y,w,h,r){
+    ctx.beginPath();
+    ctx.moveTo(x+r,y);
+    ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+    ctx.arcTo(x,y+h,x,y,r);     ctx.arcTo(x,y,x+w,y,r);
+    ctx.closePath();
+  }
+
+  function drawCell(row,col,value,locked,glow,scale){
+    const pad = Math.max(2, CELL*0.07);
+    let x=col*CELL+pad, y=row*CELL+pad, w=CELL-pad*2, h=CELL-pad*2;
+    if(scale && scale!==1){
+      const dx=w*(scale-1)/2, dy=h*(scale-1)/2;
+      x-=dx; y-=dy; w+=dx*2; h+=dy*2;
+    }
+    const {bg,text}=colorFor(value);
+    ctx.save();
+    if(glow){ ctx.shadowColor='rgba(250,204,21,0.9)'; ctx.shadowBlur=glow; }
+    roundRect(x,y,w,h,Math.max(4,CELL*0.19));
+    ctx.fillStyle=bg; ctx.fill();
+    if(locked){ ctx.lineWidth=2; ctx.strokeStyle='rgba(255,255,255,0.6)'; ctx.stroke(); }
+    ctx.shadowBlur=0;
+    ctx.fillStyle=text;
+    const digits=String(value).length;
+    const fs = Math.max(8, Math.floor(CELL*(digits>=4?0.30:digits===3?0.36:0.42)));
+    ctx.font='800 '+fs+'px system-ui, sans-serif';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(String(value), x+w/2, y+h/2+1);
+    ctx.restore();
+  }
+
+  function render(now){
+    ctx.clearRect(0,0,COLS*CELL,ROWS*CELL);
+
+    ctx.strokeStyle='rgba(255,255,255,0.045)'; ctx.lineWidth=1;
+    for(let c=1;c<COLS;c++){ ctx.beginPath(); ctx.moveTo(c*CELL,0); ctx.lineTo(c*CELL,ROWS*CELL); ctx.stroke(); }
+    for(let r=1;r<ROWS;r++){ ctx.beginPath(); ctx.moveTo(0,r*CELL); ctx.lineTo(COLS*CELL,r*CELL); ctx.stroke(); }
+
+    for(let r=0;r<ROWS;r++){
+      for(let c=0;c<COLS;c++){
+        const cell=state.grid[r][c];
+        if(!cell) continue;
+        let glow=0, scale=1;
+        if(cell.locked) glow = REDUCED_MOTION ? 10 : 10+6*Math.sin(now/350);
+        if(cell.pop && !REDUCED_MOTION){
+          const age=now-cell.pop;
+          if(age<180) scale = 1 + 0.16*Math.sin((1-age/180)*Math.PI);
+          else cell.pop=null;
+        }
+        drawCell(r,c,cell.value,cell.locked,glow,scale);
+      }
+    }
+
+    if(state.falling && state.started && !state.gameOver && !state.celebrating){
+      const f=state.falling;
+      let landRow=f.row;
+      while(landRow+1<ROWS && !state.grid[landRow+1][f.col]) landRow++;
+      const below = (landRow+1<ROWS) ? state.grid[landRow+1][f.col] : null;
+      const left  = f.col>0 ? state.grid[landRow][f.col-1] : null;
+      const right = f.col<COLS-1 ? state.grid[landRow][f.col+1] : null;
+      const willMerge = [below,left,right].some(n => n && !n.locked && n.value===f.value);
+
+      const pad=Math.max(2,CELL*0.07);
+      ctx.save();
+      ctx.setLineDash([4,3]); ctx.lineWidth=2;
+      ctx.strokeStyle = willMerge ? 'rgba(94,234,212,0.95)' : 'rgba(255,255,255,0.18)';
+      roundRect(f.col*CELL+pad, landRow*CELL+pad, CELL-pad*2, CELL-pad*2, Math.max(4,CELL*0.19));
+      ctx.stroke();
+      ctx.restore();
+
+      drawCell(f.row,f.col,f.value,false, willMerge ? (8+4*Math.sin(now/150)) : 0, 1);
+    }
+  }
+
+  function loop(now){ tick(now); render(now); requestAnimationFrame(loop); }
+
+  // ---------- HUD ----------
+  function tileEl(el,value){
+    if(value===undefined||value===null){ el.style.background='transparent'; el.textContent=''; return; }
+    const {bg,text}=colorFor(value);
+    el.style.background=bg; el.style.color=text; el.textContent=value;
+  }
+  function updateHUD(){
+    document.getElementById('scoreVal').textContent=state.score;
+    document.getElementById('bestTileVal').textContent=state.bestTile||'—';
+    document.getElementById('speedBadge').textContent='SPEED x'+state.speedMultiplier.toFixed(2);
+    tileEl(document.getElementById('n0'),state.queue[0]);
+    tileEl(document.getElementById('n1'),state.queue[1]);
+    tileEl(document.getElementById('n2'),state.queue[2]);
+  }
+  function fmtCountdown(ms){
+    if(ms<0) ms=0;
+    const s=Math.ceil(ms/1000), m=Math.floor(s/60), rem=s%60;
+    return m+':'+String(rem).padStart(2,'0');
+  }
+  function updatePowerUI(){
+    const now=Date.now(), del=state.powers.del, slow=state.powers.slow;
+    document.getElementById('delStock').textContent=del.stock+'/3';
+    document.getElementById('slowStock').textContent=slow.stock+'/3';
+    document.getElementById('delTimer').textContent=(del.stock<3&&del.nextRegenAt)?('+1 in '+fmtCountdown(del.nextRegenAt-now)):'\u00A0';
+    document.getElementById('slowTimer').textContent=state.slowActive?('active '+fmtCountdown(state.slowExpiresAt-now))
+      :((slow.stock<3&&slow.nextRegenAt)?('+1 in '+fmtCountdown(slow.nextRegenAt-now)):'\u00A0');
+    document.getElementById('pwrDelete').classList.toggle('disabled',del.stock<=0);
+    document.getElementById('pwrSlow').classList.toggle('disabled',slow.stock<=0&&!state.slowActive);
+    document.getElementById('pwrSlow').classList.toggle('slow-active',state.slowActive);
+  }
+  function regenTick(){
+    const now=Date.now();
+    for(const k of ['del','slow']){
+      const p=state.powers[k];
+      if(p.stock<3 && p.nextRegenAt!==null && now>=p.nextRegenAt){
+        p.stock++; p.nextRegenAt = p.stock<3 ? now+REGEN_MS : null;
+      }
+    }
+    updatePowerUI();
+  }
+  function hudLoop(){ updateHUD(); updatePowerUI(); requestAnimationFrame(hudLoop); }
+
+  // ---------- keyboard ----------
+  window.addEventListener('keydown',(e)=>{
+    switch(e.key){
+      case 'ArrowLeft': moveFalling(-1); e.preventDefault(); break;
+      case 'ArrowRight': moveFalling(1); e.preventDefault(); break;
+      case 'ArrowDown': state.softDrop=true; e.preventDefault(); break;
+      case ' ': case 'Spacebar': hardDrop(); e.preventDefault(); break;
+    }
+  });
+  window.addEventListener('keyup',(e)=>{ if(e.key==='ArrowDown') state.softDrop=false; });
+
+  // ---------- pointer controls on the board ----------
+  let drag=null;
+  function boardX(e){
+    const rect=canvas.getBoundingClientRect();
+    const pt = e.touches ? e.touches[0] : e;
+    return pt.clientX - rect.left;
+  }
+  function boardY(e){
+    const rect=canvas.getBoundingClientRect();
+    const pt = e.touches ? e.touches[0] : e;
+    return pt.clientY - rect.top;
+  }
+
+  function onDragStart(e){
+    if(!state.started || state.gameOver || !state.falling) return;
+    e.preventDefault();
+    drag={ startX:boardX(e), startY:boardY(e), startCol:state.falling.col, moved:false, dropped:false };
+  }
+  function onDragMove(e){
+    if(!drag || !state.falling) return;
+    e.preventDefault();
+    const dx=boardX(e)-drag.startX, dy=boardY(e)-drag.startY;
+    if(Math.abs(dx)>4||Math.abs(dy)>4) drag.moved=true;
+    // downward flick = hard drop
+    if(!drag.dropped && dy>CELL*1.2 && dy>Math.abs(dx)*1.5){
+      drag.dropped=true; hardDrop(); return;
+    }
+    const colDelta=Math.round(dx/CELL);
+    setColumn(drag.startCol+colDelta);
+  }
+  function onDragEnd(e){
+    if(!drag) return;
+    if(e && e.preventDefault) e.preventDefault();
+    drag=null;
+  }
+
+  canvas.addEventListener('touchstart',onDragStart,{passive:false});
+  canvas.addEventListener('touchmove',onDragMove,{passive:false});
+  canvas.addEventListener('touchend',onDragEnd,{passive:false});
+  canvas.addEventListener('touchcancel',onDragEnd,{passive:false});
+  canvas.addEventListener('mousedown',onDragStart);
+  window.addEventListener('mousemove',(e)=>{ if(drag) onDragMove(e); });
+  window.addEventListener('mouseup',onDragEnd);
+
+  // ---------- button bindings (tap-safe, no double-fire) ----------
+  function bindTap(el,onDown,onUp){
+    let touched=false;
+    el.addEventListener('touchstart',(e)=>{ touched=true; e.preventDefault(); onDown(); },{passive:false});
+    if(onUp){
+      el.addEventListener('touchend',(e)=>{ e.preventDefault(); onUp(); },{passive:false});
+      el.addEventListener('touchcancel',()=>onUp());
+    }
+    el.addEventListener('mousedown',(e)=>{ if(touched){touched=false;return;} e.preventDefault(); onDown(); });
+    if(onUp){ el.addEventListener('mouseup',onUp); el.addEventListener('mouseleave',onUp); }
+  }
+  bindTap(document.getElementById('btnLeft'), ()=>moveFalling(-1));
+  bindTap(document.getElementById('btnRight'),()=>moveFalling(1));
+  bindTap(document.getElementById('btnDown'), ()=>{state.softDrop=true;}, ()=>{state.softDrop=false;});
+  bindTap(document.getElementById('btnHard'), ()=>hardDrop());
+  bindTap(document.getElementById('pwrDelete'),()=>useDeleteRowPower());
+  bindTap(document.getElementById('pwrSlow'),  ()=>useSlowPower());
+
+  document.getElementById('startBtn').addEventListener('click',startGame);
+  document.getElementById('restartBtn').addEventListener('click',restartGame);
+  document.getElementById('helpBtn').addEventListener('click',()=>document.getElementById('helpModal').classList.remove('hidden'));
+  document.getElementById('closeHelp').addEventListener('click',()=>document.getElementById('helpModal').classList.add('hidden'));
+
+  function startGame(){
+    document.getElementById('startOverlay').classList.add('hidden');
+    state.started=true;
+    state.lastTick=performance.now();
+    initQueue(); spawnNext();
+  }
+  function restartGame(){
+    state=freshState();
+    document.getElementById('overOverlay').classList.add('hidden');
+    document.getElementById('winOverlay').classList.add('hidden');
+    startGame();
+  }
+
+  fitBoard();
+  setInterval(regenTick,1000);
+  requestAnimationFrame(loop);
+  requestAnimationFrame(hudLoop);
+  updateHUD(); updatePowerUI();
+})();
+</script>
+</body>
+</html>
