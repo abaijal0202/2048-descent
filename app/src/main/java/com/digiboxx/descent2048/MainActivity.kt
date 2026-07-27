@@ -62,14 +62,22 @@ private fun GameRoot(viewModel: GameViewModel) {
 
     GameScreen(
         snapshot = viewModel.snapshot,
+        hud = viewModel.hud,
         highScore = viewModel.highScore,
+        deleteArmed = viewModel.deleteArmed,
+        hapticsEnabled = viewModel.hapticsEnabled,
         onStart = viewModel::startGame,
+        onPause = viewModel::pause,
+        onResume = viewModel::resume,
         onMove = viewModel::move,
         onMoveTo = viewModel::moveTo,
         onHardDrop = viewModel::hardDrop,
         onSoftDrop = viewModel::setSoftDrop,
-        onDeleteRow = viewModel::useDeleteRow,
+        onArmDeleteRow = viewModel::armDeleteRow,
+        onDeleteRowAt = viewModel::deleteRowAt,
+        canDeleteRow = viewModel::canDeleteRow,
         onSlow = viewModel::useSlow,
+        onToggleHaptics = viewModel::toggleHaptics,
         currentColumn = viewModel::fallingColumn
     )
 }

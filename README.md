@@ -3,7 +3,7 @@
 A falling-block number merger: Tetris-style descent, 2048-style merging.
 
 ```
-prototype/index.html   Playable web version. The design spec — open it in any browser.
+prototype/index.html   Playable web version. The original design spec — open it in any browser.
 app/                   Android app (Kotlin + Jetpack Compose).
 ```
 
@@ -17,8 +17,11 @@ gradlew.bat :app:assembleDebug        # Windows
 gradlew.bat :app:testDebugUnitTest    # run the engine test suite
 ```
 
-Requires JDK 17. Android Studio bundles one; `File > Settings > Build Tools > Gradle`
-sets the JDK if the build complains about Java version.
+Requires JDK 17 — AGP 8.5 will not run on anything older, and Gradle 8.7 will not run on
+anything newer than 21. Android Studio bundles a suitable one;
+`File > Settings > Build Tools > Gradle` sets the JDK if the build complains.
+
+CI runs the unit tests and a debug assemble on every push.
 
 ## Architecture
 
@@ -27,18 +30,37 @@ Android dependencies at all** — no `Context`, no coroutines, no `System.curren
 Every method that needs the time takes it as a parameter.
 
 That is deliberate. It means the entire rule set runs as fast JVM unit tests with no
-emulator, and it is why `GameEngineTest` can fuzz twelve thousand pieces in under a
+emulator, and it is why `GameEngineTest` can fuzz sixteen thousand pieces in well under a
 second. Keep it that way: if you find yourself importing `android.*` into the `game`
 package, the logic probably belongs in the ViewModel instead.
 
 ```
-game/Model.kt        Constants, Tile, snapshots, events
+game/Model.kt        Constants, Tile, snapshots, saved-game shape, events
 game/Powers.kt       Charge banks and regeneration
-game/GameEngine.kt   Gravity, merging, milestones, powers
-data/GameStorage.kt  SharedPreferences persistence
+game/GameEngine.kt   Gravity, merging, milestones, trophies, powers
+data/GameStorage.kt  SharedPreferences persistence, including the in-progress run
+feedback/Haptics.kt  Turns GameEvents into vibration
 GameViewModel.kt     Game loop, bridges engine to Compose
 ui/                  Compose rendering and input
 ```
+
+### Rendering contract
+
+Two details in here are load-bearing and easy to undo by accident:
+
+- **`GameEngine.revision`** is bumped on every change that alters the board. The loop
+  polls at 60fps but the board changes a few times a second, so the ViewModel only
+  rebuilds a `BoardSnapshot` when the revision moves. Rebuilding unconditionally
+  allocated a `CellView` per tile on every frame.
+- **`HudTimers` is separate from `BoardSnapshot`** and quantised to whole seconds. While
+  the millisecond countdowns lived in the board snapshot, the snapshot was never equal to
+  the previous frame's and the entire board recomposed at 60fps just to animate a
+  "+1 in 12:34" label.
+
+`BoardCanvas` reads its frame clock **inside** the draw lambda. A state read from a
+`DrawScope` invalidates only the draw phase, so the board animates at 60fps without
+recomposing. Move that read into the composable body and you recompose the subtree every
+frame.
 
 ## Rules
 
@@ -46,12 +68,30 @@ ui/                  Compose rendering and input
 - Equal numbers merge when they touch — **vertically or horizontally**, not diagonally.
   Merges chain until the board is stable.
 - The next 3 tiles are previewed.
-- Fall speed increases 20% at each of 512, 1024 and 2048. These compound, so the board
-  runs at ~1.73x base speed once 2048 is reached.
-- The first 2048 clears the board and locks into the bottom-left corner permanently.
+- Tiles enter in the middle column, or the nearest free column when the middle is full.
+  The game only ends once the entire top row is blocked.
+- Fall speed increases 20% at each of 512, 1024, 2048, 4096 and 8192. These compound.
 - Two powers, 3 charges each, +1 charge every 30 minutes:
-  - **Delete Row** — clears the lowest occupied row, then re-settles and re-resolves.
+  - **Delete Row** — tap the power, then **tap the row you want cleared**. The board
+    re-settles and re-resolves afterwards.
   - **Slow** — stretches the fall interval for 30 seconds.
+
+### Trophies
+
+Reaching a rung of the ladder — **2048, then 4096, then 8192** — clears the board and
+locks a permanent trophy into the next slot along the bottom-left. Each trophy also adds
+`0.5` to a permanent score multiplier.
+
+The ladder exists because a single 2048 left the game with nowhere to go: the most
+exciting moment in a run was immediately followed by its least interesting phase, a
+permanently faster board with a corner handicap and no new goal.
+
+### Combos
+
+A cascade pays progressively more. The nth merge resolved in one chain scores at
+`1 + (n - 1) × 0.5`, capped at 4x, on top of the trophy multiplier. Before this a
+five-deep cascade was worth exactly the same as five unrelated merges, so the most
+skilful thing in the game was mechanically invisible.
 
 ### Merge tiebreak
 
@@ -59,6 +99,16 @@ When two equal tiles sit side by side, the survivor is chosen in this order: the
 player just placed or merged into, then whichever has support beneath it, then the
 left-hand tile. The first rule is the one that matters — it means the result appears
 where the player was aiming.
+
+## Feel
+
+- The falling tile is **interpolated** between gravity steps rather than jumping a whole
+  cell at a time, and merged tiles **pop** using the `poppedAtMs` the engine already
+  records.
+- `GameEvent` drives haptics — merges scale with combo depth, milestones double-tap,
+  a trophy plays a rising flourish. Toggle it from the pause screen.
+- The top of the board pulses once the stack nears the ceiling, so a loss is never a
+  surprise.
 
 ## Tunables
 
@@ -70,15 +120,21 @@ Everything balance-related is a constant in `game/Model.kt`:
 | `BASE_INTERVAL_MS` | Starting fall interval |
 | `SPAWN_TABLE` | Value spawn weights |
 | `MERGE_HORIZONTAL` | `false` reverts to vertical-only merging |
+| `TROPHY_LADDER` | The sequence of goals |
+| `SPEED_MILESTONES`, `SPEED_STEP` | Where and how much the board speeds up |
+| `COMBO_STEP`, `MAX_COMBO_MULTIPLIER` | Cascade scoring |
+| `TROPHY_SCORE_BONUS` | Score multiplier gained per trophy |
 | `POWER_REGEN_MS` | Charge recharge interval |
 | `SLOW_FACTOR`, `SLOW_DURATION_MS` | Slow power strength and duration |
+| `DANGER_CLEARANCE` | How close to the ceiling the warning appears |
 
 ## Testing
 
 `GameEngineTest` covers merge rules (including the horizontal-after-vertical case),
-gravity around the locked trophy, movement blocking, speed milestones, power charges and
-regeneration, and a fuzz run asserting the board is never left with an unresolved pair or
-a floating tile.
+combo scoring, the trophy ladder, gravity around locked trophies, movement blocking,
+speed milestones, power charges and regeneration, targeted row deletion, spawn fallback,
+pause, save/restore round trips, the render-revision contract, and a fuzz run asserting
+the board is never left with an unresolved pair or a floating tile.
 
 Balance signal from the fuzz run: with **random** column choice the best tile reached is
 512 and 2048 never happens. The goal is skill-gated, not luck-gated.
@@ -87,11 +143,15 @@ Balance signal from the fuzz run: with **random** column choice the best tile re
 
 - The launcher icon is a placeholder vector. Replace it with Image Asset Studio before
   any store release.
-- No sound or haptics yet. `GameEvent` already emits `Merged`, `Landed`, `TrophyEarned`
-  and `SpeedIncreased`, so hooking them up is additive.
+- No sound. Haptics carry the feedback for now; `GameEvent` is already the right seam to
+  hook audio onto, it just needs assets.
 - Power charges are stored in `SharedPreferences` against wall-clock time. A player can
   edit the device clock or the prefs file to refill instantly. That is acceptable while
   charges are only earned; **if charges ever become purchasable, the balance must move
   server-side**, because at that point clock-editing becomes theft rather than
   self-cheating.
+- The saved run is likewise unsigned local state, so it is editable on a rooted device.
+  Same reasoning: fine while nothing is bought.
 - Portrait only. The board aspect ratio does not suit landscape.
+- TalkBack gets a description of the board and labels on every control, but the board is
+  a single canvas — there is no per-tile navigation.

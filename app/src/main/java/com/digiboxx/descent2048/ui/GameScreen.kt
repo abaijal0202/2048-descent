@@ -30,35 +30,49 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.digiboxx.descent2048.game.BoardSnapshot
 import com.digiboxx.descent2048.game.COLS
+import com.digiboxx.descent2048.game.DANGER_CLEARANCE
 import com.digiboxx.descent2048.game.GameStatus
+import com.digiboxx.descent2048.game.HudTimers
 import com.digiboxx.descent2048.game.POWER_MAX_CHARGES
 import com.digiboxx.descent2048.game.ROWS
 import com.digiboxx.descent2048.ui.theme.AccentCyan
+import com.digiboxx.descent2048.ui.theme.AccentPink
 import com.digiboxx.descent2048.ui.theme.BgPanel
 import com.digiboxx.descent2048.ui.theme.BgPanel2
 import com.digiboxx.descent2048.ui.theme.BoardBg
 import com.digiboxx.descent2048.ui.theme.TextLight
 import com.digiboxx.descent2048.ui.theme.TextMuted
+import com.digiboxx.descent2048.ui.theme.TrophyGold
 import com.digiboxx.descent2048.ui.theme.tileBackground
 import com.digiboxx.descent2048.ui.theme.tileForeground
 
 @Composable
 fun GameScreen(
     snapshot: BoardSnapshot,
+    hud: HudTimers,
     highScore: Int,
+    deleteArmed: Boolean,
+    hapticsEnabled: Boolean,
     onStart: () -> Unit,
+    onPause: () -> Unit,
+    onResume: () -> Unit,
     onMove: (Int) -> Unit,
     onMoveTo: (Int) -> Unit,
     onHardDrop: () -> Unit,
     onSoftDrop: (Boolean) -> Unit,
-    onDeleteRow: () -> Unit,
+    onArmDeleteRow: () -> Unit,
+    onDeleteRowAt: (Int) -> Unit,
+    canDeleteRow: (Int) -> Boolean,
     onSlow: () -> Unit,
+    onToggleHaptics: () -> Unit,
     currentColumn: () -> Int
 ) {
     BoxWithConstraints(
@@ -90,7 +104,11 @@ fun GameScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            HeaderRow(snapshot = snapshot, highScore = highScore)
+            HeaderRow(
+                snapshot = snapshot,
+                highScore = highScore,
+                onPause = onPause
+            )
             NextAndSpeedRow(snapshot = snapshot)
 
             Box(
@@ -107,9 +125,46 @@ fun GameScreen(
                     BoardCanvas(
                         snapshot = snapshot,
                         cellSize = cellSize,
+                        deleteArmed = deleteArmed,
                         onMoveTo = onMoveTo,
                         onHardDrop = onHardDrop,
+                        onDeleteRowAt = onDeleteRowAt,
+                        canDeleteRow = canDeleteRow,
                         currentColumn = currentColumn
+                    )
+                }
+
+                if (deleteArmed && snapshot.status == GameStatus.PLAYING) {
+                    Text(
+                        text = "TAP A ROW TO CLEAR IT",
+                        color = AccentPink,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = 6.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF0A0C18).copy(alpha = 0.85f))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+
+                if (!deleteArmed &&
+                    snapshot.status == GameStatus.PLAYING &&
+                    snapshot.spawnClearance <= DANGER_CLEARANCE
+                ) {
+                    Text(
+                        text = "STACK TOO HIGH",
+                        color = AccentPink,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = 6.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF0A0C18).copy(alpha = 0.8f))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
                     )
                 }
 
@@ -117,21 +172,35 @@ fun GameScreen(
                     GameStatus.READY -> Overlay(
                         modifier = Modifier.matchParentSize(),
                         title = "2048 DESCENT",
-                        body = "Drag the falling number left or right. Matching numbers merge when they touch \u2014 sideways as well as down. Swipe down to drop fast.",
+                        body = "Drag the falling number left or right. Matching numbers merge when they touch — sideways as well as down. Swipe down to drop fast.",
                         actionLabel = "Start Game",
                         onAction = onStart
                     )
+                    GameStatus.PAUSED -> Overlay(
+                        modifier = Modifier.matchParentSize(),
+                        title = "Paused",
+                        body = "Score ${snapshot.score} · Top tile ${snapshot.bestTile}",
+                        actionLabel = "Resume",
+                        onAction = onResume,
+                        secondaryLabel = if (hapticsEnabled) "Haptics off" else "Haptics on",
+                        onSecondary = onToggleHaptics,
+                        tertiaryLabel = "New game",
+                        onTertiary = onStart
+                    )
                     GameStatus.CELEBRATING -> Overlay(
                         modifier = Modifier.matchParentSize(),
-                        title = "2048!",
-                        body = "The board clears and your 2048 locks into the corner. Speed ramps up \u2014 keep going!",
+                        title = "${snapshot.trophies.lastOrNull() ?: 2048}!",
+                        body = trophyBody(snapshot),
                         actionLabel = null,
                         onAction = {}
                     )
                     GameStatus.GAME_OVER -> Overlay(
                         modifier = Modifier.matchParentSize(),
                         title = "Game Over",
-                        body = "Score ${snapshot.score} \u00B7 Best tile ${snapshot.bestTile}",
+                        body = "Score ${snapshot.score} · Best tile ${snapshot.bestTile}" +
+                            if (snapshot.trophies.isNotEmpty()) {
+                                "\nTrophies ${snapshot.trophies.joinToString(", ")}"
+                            } else "",
                         actionLabel = "Play Again",
                         onAction = onStart
                     )
@@ -141,7 +210,9 @@ fun GameScreen(
 
             PowersRow(
                 snapshot = snapshot,
-                onDeleteRow = onDeleteRow,
+                hud = hud,
+                deleteArmed = deleteArmed,
+                onArmDeleteRow = onArmDeleteRow,
                 onSlow = onSlow
             )
 
@@ -154,8 +225,18 @@ fun GameScreen(
     }
 }
 
+private fun trophyBody(snapshot: BoardSnapshot): String {
+    val next = snapshot.nextTrophyValue
+    val multiplier = "%.1fx".format(snapshot.scoreMultiplier)
+    return if (next != null) {
+        "Board cleared and the trophy is locked in. Every merge now scores $multiplier. Next goal: $next."
+    } else {
+        "The ladder is complete. Every merge scores $multiplier — see how long you can hold on."
+    }
+}
+
 @Composable
-private fun HeaderRow(snapshot: BoardSnapshot, highScore: Int) {
+private fun HeaderRow(snapshot: BoardSnapshot, highScore: Int, onPause: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -168,9 +249,19 @@ private fun HeaderRow(snapshot: BoardSnapshot, highScore: Int) {
         LabelledValue(label = "SCORE", value = snapshot.score.toString())
         LabelledValue(label = "BEST", value = highScore.toString())
         LabelledValue(
-            label = "TOP TILE",
-            value = if (snapshot.bestTile > 0) snapshot.bestTile.toString() else "\u2014"
+            label = "TOP",
+            value = if (snapshot.bestTile > 0) snapshot.bestTile.toString() else "—"
         )
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(6.dp))
+                .background(BgPanel2)
+                .pointerInput(Unit) { detectTapGestures { onPause() } }
+                .padding(horizontal = 8.dp, vertical = 3.dp)
+                .semantics { contentDescription = "Pause game" }
+        ) {
+            Text(text = "‖", color = TextLight, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
     }
 }
 
@@ -218,23 +309,38 @@ private fun NextAndSpeedRow(snapshot: BoardSnapshot) {
             }
         }
 
-        Text(
-            text = "SPEED x%.2f".format(snapshot.speedMultiplier),
-            color = AccentCyan,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
+        Column(
+            horizontalAlignment = Alignment.End,
             modifier = Modifier
                 .clip(RoundedCornerShape(10.dp))
                 .background(BgPanel)
-                .padding(horizontal = 9.dp, vertical = 6.dp)
-        )
+                .padding(horizontal = 9.dp, vertical = 4.dp)
+        ) {
+            Text(
+                text = "GOAL ${snapshot.nextTrophyValue ?: "—"}",
+                color = TrophyGold,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "x%.2f · %.1f×".format(
+                    snapshot.speedMultiplier,
+                    snapshot.scoreMultiplier
+                ),
+                color = AccentCyan,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
     }
 }
 
 @Composable
 private fun PowersRow(
     snapshot: BoardSnapshot,
-    onDeleteRow: () -> Unit,
+    hud: HudTimers,
+    deleteArmed: Boolean,
+    onArmDeleteRow: () -> Unit,
     onSlow: () -> Unit
 ) {
     Row(
@@ -243,37 +349,41 @@ private fun PowersRow(
     ) {
         PowerButton(
             modifier = Modifier.weight(1f),
-            label = "DELETE ROW",
+            label = if (deleteArmed) "CANCEL" else "DELETE ROW",
             charges = snapshot.deleteCharges,
-            subtitle = regenLabel(snapshot.deleteCharges, snapshot.deleteRegenRemainingMs),
+            subtitle = if (deleteArmed) {
+                "pick a row"
+            } else {
+                regenLabel(snapshot.deleteCharges, hud.deleteRegenRemainingSec)
+            },
             enabled = snapshot.deleteCharges > 0 && snapshot.status == GameStatus.PLAYING,
-            highlighted = false,
-            onClick = onDeleteRow
+            highlighted = deleteArmed,
+            onClick = onArmDeleteRow
         )
         PowerButton(
             modifier = Modifier.weight(1f),
             label = "SLOW 30s",
             charges = snapshot.slowCharges,
-            subtitle = if (snapshot.slowActiveRemainingMs > 0) {
-                "active ${formatCountdown(snapshot.slowActiveRemainingMs)}"
+            subtitle = if (hud.slowActiveRemainingSec > 0) {
+                "active ${formatCountdown(hud.slowActiveRemainingSec)}"
             } else {
-                regenLabel(snapshot.slowCharges, snapshot.slowRegenRemainingMs)
+                regenLabel(snapshot.slowCharges, hud.slowRegenRemainingSec)
             },
             enabled = snapshot.slowCharges > 0 && snapshot.status == GameStatus.PLAYING,
-            highlighted = snapshot.slowActiveRemainingMs > 0,
+            highlighted = hud.slowActiveRemainingSec > 0,
             onClick = onSlow
         )
     }
 }
 
-private fun regenLabel(charges: Int, remainingMs: Long): String =
-    if (charges < POWER_MAX_CHARGES && remainingMs > 0) "+1 in ${formatCountdown(remainingMs)}" else " "
+private fun regenLabel(charges: Int, remainingSec: Long): String =
+    if (charges < POWER_MAX_CHARGES && remainingSec > 0) {
+        "+1 in ${formatCountdown(remainingSec)}"
+    } else " "
 
-private fun formatCountdown(remainingMs: Long): String {
-    val totalSeconds = ((remainingMs + 999) / 1000).coerceAtLeast(0)
-    val minutes = totalSeconds / 60
-    val seconds = totalSeconds % 60
-    return "%d:%02d".format(minutes, seconds)
+private fun formatCountdown(totalSeconds: Long): String {
+    val safe = totalSeconds.coerceAtLeast(0)
+    return "%d:%02d".format(safe / 60, safe % 60)
 }
 
 @Composable
@@ -293,7 +403,8 @@ private fun PowerButton(
             .pointerInput(enabled) {
                 detectTapGestures(onTap = { if (enabled) onClick() })
             }
-            .padding(vertical = 6.dp),
+            .padding(vertical = 6.dp)
+            .semantics { contentDescription = "$label, $charges of $POWER_MAX_CHARGES charges" },
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
@@ -322,21 +433,45 @@ private fun ControlsRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        ControlButton(text = "\u25C0", modifier = Modifier.weight(1f)) { onMove(-1) }
-        HoldButton(text = "\u25BC", modifier = Modifier.weight(1f), onHoldChange = onSoftDrop)
-        ControlButton(text = "\u25B6", modifier = Modifier.weight(1f)) { onMove(1) }
-        ControlButton(text = "DROP", modifier = Modifier.weight(1.4f), onClick = onHardDrop)
+        ControlButton(
+            text = "◀",
+            description = "Move left",
+            modifier = Modifier.weight(1f)
+        ) { onMove(-1) }
+        HoldButton(
+            text = "▼",
+            description = "Soft drop, hold to fall faster",
+            modifier = Modifier.weight(1f),
+            onHoldChange = onSoftDrop
+        )
+        ControlButton(
+            text = "▶",
+            description = "Move right",
+            modifier = Modifier.weight(1f)
+        ) { onMove(1) }
+        ControlButton(
+            text = "DROP",
+            description = "Hard drop",
+            modifier = Modifier.weight(1.4f),
+            onClick = onHardDrop
+        )
     }
 }
 
 @Composable
-private fun ControlButton(text: String, modifier: Modifier, onClick: () -> Unit) {
+private fun ControlButton(
+    text: String,
+    description: String,
+    modifier: Modifier,
+    onClick: () -> Unit
+) {
     Box(
         modifier = modifier
             .height(46.dp)
             .clip(RoundedCornerShape(11.dp))
             .background(BgPanel)
-            .pointerInput(Unit) { detectTapGestures(onTap = { onClick() }) },
+            .pointerInput(Unit) { detectTapGestures(onTap = { onClick() }) }
+            .semantics { contentDescription = description },
         contentAlignment = Alignment.Center
     ) {
         Text(text = text, color = TextLight, fontSize = 15.sp, fontWeight = FontWeight.Bold)
@@ -345,7 +480,12 @@ private fun ControlButton(text: String, modifier: Modifier, onClick: () -> Unit)
 
 /** Soft drop needs press-and-hold, so it reports both edges of the gesture. */
 @Composable
-private fun HoldButton(text: String, modifier: Modifier, onHoldChange: (Boolean) -> Unit) {
+private fun HoldButton(
+    text: String,
+    description: String,
+    modifier: Modifier,
+    onHoldChange: (Boolean) -> Unit
+) {
     var pressed by remember { mutableStateOf(false) }
     Box(
         modifier = modifier
@@ -364,7 +504,8 @@ private fun HoldButton(text: String, modifier: Modifier, onHoldChange: (Boolean)
                         onHoldChange(false)
                     }
                 )
-            },
+            }
+            .semantics { contentDescription = description },
         contentAlignment = Alignment.Center
     ) {
         Text(text = text, color = TextLight, fontSize = 15.sp, fontWeight = FontWeight.Bold)
@@ -377,7 +518,11 @@ private fun Overlay(
     title: String,
     body: String,
     actionLabel: String?,
-    onAction: () -> Unit
+    onAction: () -> Unit,
+    secondaryLabel: String? = null,
+    onSecondary: (() -> Unit)? = null,
+    tertiaryLabel: String? = null,
+    onTertiary: (() -> Unit)? = null
 ) {
     Box(
         modifier = modifier
@@ -389,7 +534,7 @@ private fun Overlay(
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.padding(18.dp)
         ) {
             Text(
@@ -416,6 +561,29 @@ private fun Overlay(
                 ) {
                     Text(text = actionLabel, fontWeight = FontWeight.Bold)
                 }
+            }
+            if (secondaryLabel != null && onSecondary != null) {
+                Text(
+                    text = secondaryLabel,
+                    color = AccentCyan,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(7.dp))
+                        .pointerInput(Unit) { detectTapGestures { onSecondary() } }
+                        .padding(horizontal = 12.dp, vertical = 5.dp)
+                )
+            }
+            if (tertiaryLabel != null && onTertiary != null) {
+                Text(
+                    text = tertiaryLabel,
+                    color = TextMuted,
+                    fontSize = 11.sp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(7.dp))
+                        .pointerInput(Unit) { detectTapGestures { onTertiary() } }
+                        .padding(horizontal = 12.dp, vertical = 5.dp)
+                )
             }
         }
     }

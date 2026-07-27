@@ -32,9 +32,32 @@ class GameEngine(
     var status: GameStatus = GameStatus.READY
         private set
 
-    private var passed512 = false
-    private var passed1024 = false
-    private var passed2048 = false
+    /**
+     * Bumped on every change that alters what the board looks like.
+     *
+     * The render loop polls at 60fps but the board only changes a few times a second.
+     * Comparing this is what lets the ViewModel skip rebuilding a snapshot — and with it
+     * ~91 CellView allocations — on the ~95% of frames where nothing happened.
+     */
+    var revision: Int = 0
+        private set
+
+    private val passedMilestones = mutableSetOf<Int>()
+
+    /** Trophy values won so far, in the order they were earned. */
+    private val trophies = mutableListOf<Int>()
+
+    val trophyCount: Int get() = trophies.size
+
+    /** The next rung of [TROPHY_LADDER], or null once the ladder is complete. */
+    val nextTrophyValue: Int? get() = TROPHY_LADDER.getOrNull(trophies.size)
+
+    /** Every trophy earned permanently raises the value of every subsequent merge. */
+    val scoreMultiplier: Double get() = 1.0 + trophies.size * TROPHY_SCORE_BONUS
+
+    /** Length of the most recent merge chain, for the combo readout. */
+    var lastComboDepth: Int = 0
+        private set
 
     var deleteBank: PowerBank = initialDeleteBank
         private set
@@ -49,6 +72,8 @@ class GameEngine(
 
     private val pendingEvents = mutableListOf<GameEvent>()
 
+    private fun markDirty() { revision++ }
+
     // ---------------------------------------------------------------- lifecycle
 
     fun start(nowMs: Long) {
@@ -56,7 +81,9 @@ class GameEngine(
         score = 0
         bestTile = 0
         speedMultiplier = 1.0
-        passed512 = false; passed1024 = false; passed2048 = false
+        passedMilestones.clear()
+        trophies.clear()
+        lastComboDepth = 0
         slowExpiresAtMs = 0L
         softDrop = false
         pendingEvents.clear()
@@ -65,6 +92,22 @@ class GameEngine(
         status = GameStatus.PLAYING
         lastStepMs = nowMs
         spawnNext()
+        markDirty()
+    }
+
+    /** Halts gravity without discarding the run. Only meaningful while playing. */
+    fun pause() {
+        if (status != GameStatus.PLAYING) return
+        status = GameStatus.PAUSED
+        softDrop = false
+        markDirty()
+    }
+
+    fun resume(nowMs: Long) {
+        if (status != GameStatus.PAUSED) return
+        status = GameStatus.PLAYING
+        lastStepMs = nowMs
+        markDirty()
     }
 
     private fun randomSpawnValue(): Int {
@@ -77,17 +120,38 @@ class GameEngine(
         return SPAWN_TABLE.first().first
     }
 
+    /**
+     * The column a new tile enters on: the middle when it is free, otherwise the nearest
+     * free column to it, or -1 when the whole top row is full.
+     *
+     * Falling back to a neighbour matters. Spawning only ever at the middle meant a
+     * single tall stack in the centre ended the game while six columns sat empty, which
+     * reads as the game cheating rather than the player losing.
+     */
+    private fun spawnColumn(): Int {
+        if (grid[0][START_COL] == null) return START_COL
+        for (offset in 1 until COLS) {
+            val right = START_COL + offset
+            if (right < COLS && grid[0][right] == null) return right
+            val left = START_COL - offset
+            if (left >= 0 && grid[0][left] == null) return left
+        }
+        return -1
+    }
+
     private fun spawnNext() {
-        // If the spawn cell is already occupied the stack has reached the ceiling.
-        if (grid[0][START_COL] != null) {
+        val col = spawnColumn()
+        if (col < 0) {
             status = GameStatus.GAME_OVER
             falling = null
             pendingEvents += GameEvent.GameOver
+            markDirty()
             return
         }
         val value = queue.removeFirst()
         queue.addLast(randomSpawnValue())
-        falling = FallingTile(value = value, row = 0, col = START_COL)
+        falling = FallingTile(value = value, row = 0, col = col)
+        markDirty()
     }
 
     // ---------------------------------------------------------------- input
@@ -119,7 +183,10 @@ class GameEngine(
             }
             col = next
         }
-        if (col != current.col) falling = current.copy(col = col)
+        if (col != current.col) {
+            falling = current.copy(col = col)
+            markDirty()
+        }
     }
 
     /** Drop straight to the landing row and settle immediately. */
@@ -131,6 +198,7 @@ class GameEngine(
         falling = current.copy(row = row)
         land(nowMs)
         lastStepMs = nowMs
+        markDirty()
     }
 
     // ---------------------------------------------------------------- clock
@@ -187,6 +255,7 @@ class GameEngine(
         } else {
             falling = current.copy(row = below)
         }
+        markDirty()
         return drainEvents()
     }
 
@@ -205,10 +274,14 @@ class GameEngine(
         grid[current.row][current.col] = tile
         falling = null
         pendingEvents += GameEvent.Landed
+        // A tile that is merely placed counts toward the best-tile readout. Only
+        // crediting merges meant a run full of spawned 64s still reported "—".
+        if (tile.value > bestTile) bestTile = tile.value
 
         resolveBoard(tile, nowMs)
 
         if (status == GameStatus.PLAYING) spawnNext()
+        markDirty()
     }
 
     // ---------------------------------------------------------------- gravity
@@ -217,7 +290,7 @@ class GameEngine(
      * Compacts every column downward, preserving tile identity so the UI can animate
      * a tile falling rather than seeing it disappear and reappear.
      *
-     * The locked trophy acts as a floor: tiles rest on top of it and never pass through.
+     * A locked trophy acts as a floor: tiles rest on top of it and never pass through.
      */
     private fun settleGravity() {
         for (col in 0 until COLS) {
@@ -245,6 +318,14 @@ class GameEngine(
     private fun mergeable(a: Tile?, b: Tile?): Boolean =
         a != null && b != null && !a.locked && !b.locked && a.value == b.value
 
+    /** The nth merge of a chain is worth this much more than a lone merge. */
+    private fun comboMultiplier(depth: Int): Double =
+        (1.0 + (depth - 1).coerceAtLeast(0) * COMBO_STEP).coerceAtMost(MAX_COMBO_MULTIPLIER)
+
+    private fun awardScore(value: Int, depth: Int) {
+        score += (value * comboMultiplier(depth) * scoreMultiplier).toInt()
+    }
+
     /**
      * Finds one merge and applies it, returning the surviving tile, or null when the
      * board is stable.
@@ -259,7 +340,7 @@ class GameEngine(
      *   2. whichever tile has support beneath it;
      *   3. the left-hand tile as a deterministic fallback.
      */
-    private fun findAndApplyOneMerge(active: Tile?, nowMs: Long): Tile? {
+    private fun findAndApplyOneMerge(active: Tile?, depth: Int, nowMs: Long): Tile? {
         for (row in ROWS - 1 downTo 1) {
             for (col in 0 until COLS) {
                 val lower = grid[row][col]
@@ -268,8 +349,8 @@ class GameEngine(
                     lower!!.value *= 2
                     lower.poppedAtMs = nowMs
                     grid[row - 1][col] = null
-                    score += lower.value
-                    pendingEvents += GameEvent.Merged(lower.value, row, col)
+                    awardScore(lower.value, depth)
+                    pendingEvents += GameEvent.Merged(lower.value, row, col, depth)
                     checkMilestone(lower.value, nowMs)
                     return lower
                 }
@@ -302,8 +383,8 @@ class GameEngine(
                 grid[row][keepCol] = keep
                 keep.value *= 2
                 keep.poppedAtMs = nowMs
-                score += keep.value
-                pendingEvents += GameEvent.Merged(keep.value, row, keepCol)
+                awardScore(keep.value, depth)
+                pendingEvents += GameEvent.Merged(keep.value, row, keepCol, depth)
                 checkMilestone(keep.value, nowMs)
                 return keep
             }
@@ -315,82 +396,116 @@ class GameEngine(
      * Settle, merge, repeat until nothing else can combine.
      *
      * [active] follows the chain so each successive merge knows which tile the player
-     * is "driving". The guard is a safety net: the board has 91 cells and every merge
+     * is "driving", and [depth] counts how deep the cascade has gone so the score can
+     * reward it. The guard is a safety net: the board has 91 cells and every merge
      * removes one tile, so termination is guaranteed, but an infinite loop here would
      * freeze the UI thread and that is not a risk worth leaving open.
      */
     private fun resolveBoard(active: Tile?, nowMs: Long) {
         var current = active
+        var depth = 0
         var guard = 0
         while (guard++ < ROWS * COLS * 4) {
             settleGravity()
             if (status == GameStatus.CELEBRATING) return
-            val merged = findAndApplyOneMerge(current, nowMs) ?: break
+            val merged = findAndApplyOneMerge(current, depth + 1, nowMs) ?: break
+            depth++
             current = merged
             if (status == GameStatus.CELEBRATING) return
         }
+        lastComboDepth = depth
         settleGravity()
     }
 
     // ---------------------------------------------------------------- milestones
 
     private fun checkMilestone(value: Int, nowMs: Long) {
-        if (value >= 512 && !passed512) {
-            passed512 = true
-            speedMultiplier *= 1.2
-            pendingEvents += GameEvent.SpeedIncreased(512, speedMultiplier)
-        }
-        if (value >= 1024 && !passed1024) {
-            passed1024 = true
-            speedMultiplier *= 1.2
-            pendingEvents += GameEvent.SpeedIncreased(1024, speedMultiplier)
-        }
-        if (value >= TROPHY_VALUE && !passed2048) {
-            passed2048 = true
-            speedMultiplier *= 1.2
-            pendingEvents += GameEvent.SpeedIncreased(TROPHY_VALUE, speedMultiplier)
-            awardTrophy(nowMs)
+        for (milestone in SPEED_MILESTONES) {
+            if (value >= milestone && passedMilestones.add(milestone)) {
+                speedMultiplier *= SPEED_STEP
+                pendingEvents += GameEvent.SpeedIncreased(milestone, speedMultiplier)
+            }
         }
         if (value > bestTile) bestTile = value
+
+        val target = nextTrophyValue
+        if (target != null && value >= target) awardTrophy(target, nowMs)
     }
 
-    /** Clear everything and lock a permanent 2048 into the bottom-left corner. */
-    private fun awardTrophy(nowMs: Long) {
+    /**
+     * Clear the board and lock a permanent trophy into the next bottom-left slot.
+     *
+     * Previously earned trophies are re-placed alongside it, so the corner accumulates a
+     * visible record of how far the run has gone.
+     */
+    private fun awardTrophy(value: Int, nowMs: Long) {
+        trophies.add(value)
         for (r in 0 until ROWS) for (c in 0 until COLS) grid[r][c] = null
-        grid[ROWS - 1][0] = Tile(id = nextTileId++, value = TROPHY_VALUE, locked = true)
-            .apply { poppedAtMs = nowMs }
+        trophies.forEachIndexed { index, trophyValue ->
+            if (index < COLS) {
+                grid[ROWS - 1][index] =
+                    Tile(id = nextTileId++, value = trophyValue, locked = true)
+                        .apply { poppedAtMs = nowMs }
+            }
+        }
         falling = null
         status = GameStatus.CELEBRATING
         celebrateUntilMs = nowMs + 2200L
-        pendingEvents += GameEvent.TrophyEarned
+        pendingEvents += GameEvent.TrophyEarned(value, trophies.size)
+        markDirty()
     }
 
     // ---------------------------------------------------------------- powers
 
-    /** Clears the lowest row containing at least one non-trophy tile. */
-    fun useDeleteRow(nowMs: Long): Boolean {
+    /** Lowest row holding at least one non-trophy tile, or -1 when there is none. */
+    fun lowestOccupiedRow(): Int {
+        for (row in ROWS - 1 downTo 0) {
+            for (col in 0 until COLS) {
+                val cell = grid[row][col]
+                if (cell != null && !cell.locked) return row
+            }
+        }
+        return -1
+    }
+
+    /** True when Delete Row would actually remove something from [row]. */
+    fun canDeleteRow(row: Int): Boolean {
+        if (row !in 0 until ROWS) return false
+        for (col in 0 until COLS) {
+            val cell = grid[row][col]
+            if (cell != null && !cell.locked) return true
+        }
+        return false
+    }
+
+    /**
+     * Clears every non-trophy tile from [row].
+     *
+     * The player picks the row. The old behaviour always took the lowest occupied row,
+     * which in a game where you deliberately build your largest tiles along the floor
+     * meant the panic button destroyed exactly the work you were protecting.
+     */
+    fun useDeleteRowAt(row: Int, nowMs: Long): Boolean {
         if (status != GameStatus.PLAYING) return false
         deleteBank = deleteBank.refresh(nowMs)
         if (deleteBank.charges <= 0) return false
-        deleteBank = deleteBank.spend(nowMs)
+        // Validate before spending: clearing nothing used to still cost a charge.
+        if (!canDeleteRow(row)) return false
 
-        var target = -1
-        outer@ for (row in ROWS - 1 downTo 0) {
-            for (col in 0 until COLS) {
-                val cell = grid[row][col]
-                if (cell != null && !cell.locked) { target = row; break@outer }
-            }
+        deleteBank = deleteBank.spend(nowMs)
+        for (col in 0 until COLS) {
+            val cell = grid[row][col]
+            if (cell != null && !cell.locked) grid[row][col] = null
         }
-        if (target >= 0) {
-            for (col in 0 until COLS) {
-                val cell = grid[target][col]
-                if (cell != null && !cell.locked) grid[target][col] = null
-            }
-            // Clearing a row can drop tiles into new adjacencies, so re-resolve.
-            resolveBoard(null, nowMs)
-        }
+        // Clearing a row can drop tiles into new adjacencies, so re-resolve.
+        resolveBoard(null, nowMs)
+        pendingEvents += GameEvent.PowerUsed
+        markDirty()
         return true
     }
+
+    /** Convenience overload targeting the lowest occupied row. */
+    fun useDeleteRow(nowMs: Long): Boolean = useDeleteRowAt(lowestOccupiedRow(), nowMs)
 
     fun useSlow(nowMs: Long): Boolean {
         if (status != GameStatus.PLAYING) return false
@@ -399,6 +514,8 @@ class GameEngine(
         slowBank = slowBank.spend(nowMs)
         // Re-activating while already slow extends from now rather than stacking.
         slowExpiresAtMs = nowMs + SLOW_DURATION_MS
+        pendingEvents += GameEvent.PowerUsed
+        markDirty()
         return true
     }
 
@@ -422,6 +539,16 @@ class GameEngine(
             if (current.col < COLS - 1) grid[row][current.col + 1] else null
         )
         return neighbours.any { it != null && !it.locked && it.value == current.value }
+    }
+
+    /** Empty rows above the spawn column. Drives the "you are about to lose" warning. */
+    fun spawnClearance(): Int {
+        var clear = 0
+        for (row in 0 until ROWS) {
+            if (grid[row][START_COL] != null) break
+            clear++
+        }
+        return clear
     }
 
     fun snapshot(nowMs: Long): BoardSnapshot {
@@ -450,13 +577,95 @@ class GameEngine(
             score = score,
             bestTile = bestTile,
             speedMultiplier = speedMultiplier,
+            scoreMultiplier = scoreMultiplier,
             status = status,
+            trophies = trophies.toList(),
+            nextTrophyValue = nextTrophyValue,
+            spawnClearance = spawnClearance(),
+            lastComboDepth = lastComboDepth,
             deleteCharges = deleteBank.charges,
             slowCharges = slowBank.charges,
-            deleteRegenRemainingMs = deleteBank.regenRemainingMs(nowMs),
-            slowRegenRemainingMs = slowBank.regenRemainingMs(nowMs),
-            slowActiveRemainingMs = (slowExpiresAtMs - nowMs).coerceAtLeast(0L)
+            stepStartMs = lastStepMs,
+            stepDurationMs = currentIntervalMs(nowMs)
         )
+    }
+
+    /** The volatile countdowns, quantised to seconds. Cheap enough to call every frame. */
+    fun hudTimers(nowMs: Long): HudTimers {
+        fun toSeconds(ms: Long): Long = (ms + 999) / 1000
+        return HudTimers(
+            deleteRegenRemainingSec = toSeconds(deleteBank.regenRemainingMs(nowMs)),
+            slowRegenRemainingSec = toSeconds(slowBank.regenRemainingMs(nowMs)),
+            slowActiveRemainingSec = toSeconds((slowExpiresAtMs - nowMs).coerceAtLeast(0L))
+        )
+    }
+
+    // ---------------------------------------------------------------- persistence
+
+    /** Snapshot the run for disk, or null when there is nothing worth saving. */
+    fun exportState(): SavedGame? {
+        if (status != GameStatus.PLAYING && status != GameStatus.PAUSED) return null
+        val current = falling ?: return null
+
+        val cells = ArrayList<SavedCell>()
+        for (row in 0 until ROWS) {
+            for (col in 0 until COLS) {
+                val tile = grid[row][col] ?: continue
+                cells.add(SavedCell(row, col, tile.value, tile.locked))
+            }
+        }
+        return SavedGame(
+            cells = cells,
+            fallingValue = current.value,
+            fallingRow = current.row,
+            fallingCol = current.col,
+            queue = queue.toList(),
+            score = score,
+            bestTile = bestTile,
+            trophies = trophies.toList(),
+            passedMilestones = passedMilestones.toList(),
+            speedMultiplier = speedMultiplier
+        )
+    }
+
+    /**
+     * Rebuild a run from disk. Restores into [GameStatus.PAUSED] on purpose — dropping
+     * the player straight back into a live falling tile they had no time to read is a
+     * good way to lose a run you just rescued.
+     */
+    fun importState(state: SavedGame, nowMs: Long) {
+        for (r in 0 until ROWS) for (c in 0 until COLS) grid[r][c] = null
+        nextTileId = 1L
+        for (cell in state.cells) {
+            if (cell.row !in 0 until ROWS || cell.col !in 0 until COLS) continue
+            grid[cell.row][cell.col] = Tile(
+                id = nextTileId++,
+                value = cell.value,
+                locked = cell.locked
+            )
+        }
+        queue.clear()
+        state.queue.forEach { queue.addLast(it) }
+        while (queue.size < 3) queue.addLast(randomSpawnValue())
+
+        score = state.score
+        bestTile = state.bestTile
+        speedMultiplier = state.speedMultiplier
+        passedMilestones.clear(); passedMilestones.addAll(state.passedMilestones)
+        trophies.clear(); trophies.addAll(state.trophies)
+        lastComboDepth = 0
+        slowExpiresAtMs = 0L
+        softDrop = false
+        pendingEvents.clear()
+
+        falling = FallingTile(
+            value = state.fallingValue,
+            row = state.fallingRow.coerceIn(0, ROWS - 1),
+            col = state.fallingCol.coerceIn(0, COLS - 1)
+        )
+        lastStepMs = nowMs
+        status = GameStatus.PAUSED
+        markDirty()
     }
 
     // ---------------------------------------------------------------- test hooks
