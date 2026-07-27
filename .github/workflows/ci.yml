@@ -36,6 +36,16 @@ jobs:
       - name: Assemble debug APK
         run: ./gradlew :app:assembleDebug
 
+      # The debug build carries applicationIdSuffix ".debug", so it installs alongside
+      # any other copy of the game rather than replacing it.
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: 2048-descent-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Upload test report
         if: failure()
         uses: actions/upload-artifact@v4
