@@ -1,4 +1,7 @@
 # ---- Android / Gradle ----
+# Note: gradle/wrapper/gradle-wrapper.jar IS committed on purpose — it is how the
+# wrapper bootstraps on a fresh clone.
+!gradle/wrapper/gradle-wrapper.jar
 *.iml
 .gradle/
 local.properties

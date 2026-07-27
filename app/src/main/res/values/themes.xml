@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Descent2048" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#131625</item>
+        <item name="android:navigationBarColor">#131625</item>
+        <item name="android:windowBackground">#131625</item>
+    </style>
+</resources>
