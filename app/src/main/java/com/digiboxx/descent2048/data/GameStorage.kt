@@ -36,9 +36,11 @@ class GameStorage(context: Context) {
 
     fun loadDeleteBank(): PowerBank = loadBank(KEY_DELETE_CHARGES, KEY_DELETE_REGEN)
     fun loadSlowBank(): PowerBank = loadBank(KEY_SLOW_CHARGES, KEY_SLOW_REGEN)
+    fun loadPlanBank(): PowerBank = loadBank(KEY_PLAN_CHARGES, KEY_PLAN_REGEN)
 
     fun saveDeleteBank(bank: PowerBank) = saveBank(bank, KEY_DELETE_CHARGES, KEY_DELETE_REGEN)
     fun saveSlowBank(bank: PowerBank) = saveBank(bank, KEY_SLOW_CHARGES, KEY_SLOW_REGEN)
+    fun savePlanBank(bank: PowerBank) = saveBank(bank, KEY_PLAN_CHARGES, KEY_PLAN_REGEN)
 
     private fun loadBank(chargesKey: String, regenKey: String): PowerBank {
         val charges = prefs.getInt(chargesKey, POWER_MAX_CHARGES).coerceIn(0, POWER_MAX_CHARGES)
@@ -144,6 +146,8 @@ class GameStorage(context: Context) {
         const val KEY_DELETE_REGEN = "delete_regen_at"
         const val KEY_SLOW_CHARGES = "slow_charges"
         const val KEY_SLOW_REGEN = "slow_regen_at"
+        const val KEY_PLAN_CHARGES = "plan_charges"
+        const val KEY_PLAN_REGEN = "plan_regen_at"
         const val KEY_SAVED_GAME = "saved_game"
     }
 }

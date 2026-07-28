@@ -43,6 +43,7 @@ import com.digiboxx.descent2048.game.GameStatus
 import com.digiboxx.descent2048.game.HudTimers
 import com.digiboxx.descent2048.game.POWER_MAX_CHARGES
 import com.digiboxx.descent2048.game.ROWS
+import com.digiboxx.descent2048.game.SlideDirection
 import com.digiboxx.descent2048.ui.theme.AccentCyan
 import com.digiboxx.descent2048.ui.theme.AccentPink
 import com.digiboxx.descent2048.ui.theme.BgPanel
@@ -72,6 +73,8 @@ fun GameScreen(
     onDeleteRowAt: (Int) -> Unit,
     canDeleteRow: (Int) -> Boolean,
     onSlow: () -> Unit,
+    onPlan: () -> Unit,
+    onSlide: (SlideDirection) -> Unit,
     onToggleHaptics: () -> Unit,
     currentColumn: () -> Int
 ) {
@@ -94,7 +97,11 @@ fun GameScreen(
 
         val cellFromWidth = availableWidth / COLS
         val cellFromHeight = availableHeight / ROWS
-        val cellSize = minOf(cellFromWidth, cellFromHeight).coerceIn(18.dp, 44.dp)
+        // The upper bound has to clear what a 6 x 10 board can actually use, otherwise
+        // the cap re-binds and the whole point of the smaller grid is lost.
+        val cellSize = minOf(cellFromWidth, cellFromHeight).coerceIn(18.dp, 64.dp)
+
+        val planning = snapshot.status == GameStatus.PLANNING
 
         Column(
             modifier = Modifier
@@ -126,9 +133,11 @@ fun GameScreen(
                         snapshot = snapshot,
                         cellSize = cellSize,
                         deleteArmed = deleteArmed,
+                        planning = planning,
                         onMoveTo = onMoveTo,
                         onHardDrop = onHardDrop,
                         onDeleteRowAt = onDeleteRowAt,
+                        onSlide = onSlide,
                         canDeleteRow = canDeleteRow,
                         currentColumn = currentColumn
                     )
@@ -150,7 +159,22 @@ fun GameScreen(
                     )
                 }
 
-                if (!deleteArmed &&
+                if (planning) {
+                    Text(
+                        text = "PLAN · ${hud.planActiveRemainingSec}s · SWIPE TO SLIDE",
+                        color = TrophyGold,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = 14.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF0A0C18).copy(alpha = 0.85f))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+
+                if (!deleteArmed && !planning &&
                     snapshot.status == GameStatus.PLAYING &&
                     snapshot.spawnClearance <= DANGER_CLEARANCE
                 ) {
@@ -204,7 +228,7 @@ fun GameScreen(
                         actionLabel = "Play Again",
                         onAction = onStart
                     )
-                    GameStatus.PLAYING -> Unit
+                    GameStatus.PLAYING, GameStatus.PLANNING -> Unit
                 }
             }
 
@@ -212,15 +236,21 @@ fun GameScreen(
                 snapshot = snapshot,
                 hud = hud,
                 deleteArmed = deleteArmed,
+                planning = planning,
                 onArmDeleteRow = onArmDeleteRow,
-                onSlow = onSlow
+                onSlow = onSlow,
+                onPlan = onPlan
             )
 
-            ControlsRow(
-                onMove = onMove,
-                onHardDrop = onHardDrop,
-                onSoftDrop = onSoftDrop
-            )
+            if (planning) {
+                SlideControlsRow(onSlide = onSlide)
+            } else {
+                ControlsRow(
+                    onMove = onMove,
+                    onHardDrop = onHardDrop,
+                    onSoftDrop = onSoftDrop
+                )
+            }
         }
     }
 }
@@ -340,8 +370,10 @@ private fun PowersRow(
     snapshot: BoardSnapshot,
     hud: HudTimers,
     deleteArmed: Boolean,
+    planning: Boolean,
     onArmDeleteRow: () -> Unit,
-    onSlow: () -> Unit
+    onSlow: () -> Unit,
+    onPlan: () -> Unit
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -373,6 +405,55 @@ private fun PowersRow(
             highlighted = hud.slowActiveRemainingSec > 0,
             onClick = onSlow
         )
+        PowerButton(
+            modifier = Modifier.weight(1f),
+            label = "PLAN 15s",
+            charges = snapshot.planCharges,
+            subtitle = if (planning) {
+                "${hud.planActiveRemainingSec}s left"
+            } else {
+                regenLabel(snapshot.planCharges, hud.planRegenRemainingSec)
+            },
+            enabled = snapshot.planCharges > 0 && snapshot.status == GameStatus.PLAYING,
+            highlighted = planning,
+            onClick = onPlan
+        )
+    }
+}
+
+/**
+ * Replaces the movement controls during a Plan window.
+ *
+ * The board takes swipes, but four explicit arrows make the mode's rules obvious the
+ * first time a player triggers it — and a tap is more precise than a swipe when the
+ * clock is running.
+ */
+@Composable
+private fun SlideControlsRow(onSlide: (SlideDirection) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        ControlButton(
+            text = "◀",
+            description = "Slide board left",
+            modifier = Modifier.weight(1f)
+        ) { onSlide(SlideDirection.LEFT) }
+        ControlButton(
+            text = "▲",
+            description = "Slide board up",
+            modifier = Modifier.weight(1f)
+        ) { onSlide(SlideDirection.UP) }
+        ControlButton(
+            text = "▼",
+            description = "Slide board down",
+            modifier = Modifier.weight(1f)
+        ) { onSlide(SlideDirection.DOWN) }
+        ControlButton(
+            text = "▶",
+            description = "Slide board right",
+            modifier = Modifier.weight(1f)
+        ) { onSlide(SlideDirection.RIGHT) }
     }
 }
 

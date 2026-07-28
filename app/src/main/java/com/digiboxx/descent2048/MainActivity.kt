@@ -77,6 +77,8 @@ private fun GameRoot(viewModel: GameViewModel) {
         onDeleteRowAt = viewModel::deleteRowAt,
         canDeleteRow = viewModel::canDeleteRow,
         onSlow = viewModel::useSlow,
+        onPlan = viewModel::usePlan,
+        onSlide = viewModel::slide,
         onToggleHaptics = viewModel::toggleHaptics,
         currentColumn = viewModel::fallingColumn
     )

@@ -13,6 +13,7 @@ import com.digiboxx.descent2048.game.GameEngine
 import com.digiboxx.descent2048.game.GameEvent
 import com.digiboxx.descent2048.game.GameStatus
 import com.digiboxx.descent2048.game.HudTimers
+import com.digiboxx.descent2048.game.SlideDirection
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -65,12 +66,16 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // PLANNING counts as live: the 15-second bar has to animate smoothly.
     private fun GameStatus.isLive() =
-        this == GameStatus.PLAYING || this == GameStatus.CELEBRATING
+        this == GameStatus.PLAYING ||
+            this == GameStatus.CELEBRATING ||
+            this == GameStatus.PLANNING
 
     private fun newEngine() = GameEngine(
         initialDeleteBank = storage.loadDeleteBank(),
-        initialSlowBank = storage.loadSlowBank()
+        initialSlowBank = storage.loadSlowBank(),
+        initialPlanBank = storage.loadPlanBank()
     )
 
     private fun now() = System.currentTimeMillis()
@@ -140,6 +145,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private fun persistPowers() {
         storage.saveDeleteBank(engine.deleteBank)
         storage.saveSlowBank(engine.slowBank)
+        storage.savePlanBank(engine.planBank)
     }
 
     /** Write the run to disk so it survives the process being killed in the background. */
@@ -181,7 +187,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun pause() {
-        engine.pause()
+        engine.pause(now())
         deleteArmed = false
         persistRun()
         persistPowers()
@@ -226,6 +232,20 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Spend a Plan charge: gravity stops and the board becomes a 2048 grid for 15s. */
+    fun usePlan() {
+        deleteArmed = false
+        if (engine.usePlan(now())) {
+            persistPowers()
+            refreshSnapshot()
+        }
+    }
+
+    /** One 2048 swipe during the Plan window. */
+    fun slide(direction: SlideDirection) {
+        if (engine.slide(direction, now())) refreshSnapshot()
+    }
+
     /** Column of the falling tile, for anchoring drag gestures. */
     fun fallingColumn(): Int = engine.falling?.col ?: 0
 
@@ -239,7 +259,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
      * without any further warning.
      */
     fun onPause() {
-        engine.pause()
+        engine.pause(now())
         deleteArmed = false
         persistRun()
         persistPowers()

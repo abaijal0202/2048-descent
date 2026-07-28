@@ -70,7 +70,7 @@ class GameEngineTest {
         e.debugPlace(ROWS - 1, 1, 32)
         e.debugPlace(ROWS - 2, 1, 4)
         e.debugPlace(ROWS - 1, 2, 4)   // diagonal to the other 4
-        e.debugSetFalling(64, 0, 6)
+        e.debugSetFalling(64, 0, COLS - 1)
         e.hardDrop(1000L)
 
         assertEquals("diagonal 4s must stay separate", 4, e.debugAt(ROWS - 2, 1)?.value)
@@ -135,7 +135,7 @@ class GameEngineTest {
         e.moveTo(6)
         assertEquals("should stop just left of the wall", 2, e.falling?.col)
 
-        e.debugSetFalling(2, 5, 6)
+        e.debugSetFalling(2, 5, COLS - 1)
         e.moveTo(0)
         assertEquals("should stop just right of the wall", 4, e.falling?.col)
     }
@@ -405,7 +405,7 @@ class GameEngineTest {
     fun `a paused game does not advance`() {
         val e = blankPlaying()
         e.debugSetFalling(2, 0, 3)
-        e.pause()
+        e.pause(0L)
         assertEquals(GameStatus.PAUSED, e.status)
 
         e.tick(1_000_000L)
@@ -421,7 +421,7 @@ class GameEngineTest {
     fun `input is ignored while paused`() {
         val e = blankPlaying()
         e.debugSetFalling(2, 0, 3)
-        e.pause()
+        e.pause(0L)
         e.moveTo(0)
         assertEquals("sliding must not work while paused", 3, e.falling?.col)
         assertFalse(e.useSlow(1000L))
@@ -490,6 +490,139 @@ class GameEngineTest {
         assertEquals(SLOW_DURATION_MS / 1000, a.slowActiveRemainingSec)
     }
 
+    // ------------------------------------------------------------ plan power
+
+    private fun planning(seed: Int = 1): GameEngine {
+        val e = blankPlaying(seed)
+        assertTrue(e.usePlan(0L))
+        return e
+    }
+
+    @Test
+    fun `plan suspends gravity for fifteen seconds`() {
+        val e = blankPlaying()
+        e.debugSetFalling(2, 0, 3)
+        assertTrue(e.usePlan(0L))
+        assertEquals(GameStatus.PLANNING, e.status)
+        assertEquals(2, e.planBank.charges)
+
+        e.tick(PLAN_DURATION_MS - 1)
+        assertEquals("the tile must not fall during Plan", 0, e.falling?.row)
+        assertEquals(GameStatus.PLANNING, e.status)
+
+        e.tick(PLAN_DURATION_MS)
+        assertEquals("gravity returns when the window closes", GameStatus.PLAYING, e.status)
+    }
+
+    @Test
+    fun `plan refuses to fire with no charges and cannot stack`() {
+        val e = blankPlaying()
+        assertTrue(e.usePlan(0L))
+        assertFalse("already planning", e.usePlan(10L))
+
+        e.tick(PLAN_DURATION_MS)
+        assertTrue(e.usePlan(PLAN_DURATION_MS))
+        e.tick(PLAN_DURATION_MS * 2)
+        assertTrue(e.usePlan(PLAN_DURATION_MS * 2))
+        e.tick(PLAN_DURATION_MS * 3)
+        assertFalse("fourth use has no charge", e.usePlan(PLAN_DURATION_MS * 3))
+    }
+
+    @Test
+    fun `pausing out of plan ends it rather than freezing the timer`() {
+        val e = planning()
+        e.pause(100L)
+        assertEquals(GameStatus.PAUSED, e.status)
+        assertEquals("the Plan window must not survive a pause", 0L, e.planRemainingMs(100L))
+    }
+
+    @Test
+    fun `a slide compacts a row toward the swipe and merges equal neighbours`() {
+        val e = planning()
+        e.debugPlace(4, 1, 4)
+        e.debugPlace(4, 3, 4)
+        e.debugPlace(4, 5, 8)
+
+        assertTrue(e.slide(SlideDirection.LEFT, 100L))
+        assertEquals("the two 4s combine", 8, e.debugAt(4, 0)?.value)
+        assertEquals("the 8 packs in behind them", 8, e.debugAt(4, 1)?.value)
+        assertNull(e.debugAt(4, 2))
+        assertEquals(2, e.debugTileCount())
+    }
+
+    @Test
+    fun `each tile merges at most once per slide`() {
+        val e = planning()
+        for (col in 0 until 4) e.debugPlace(4, col, 2)
+
+        assertTrue(e.slide(SlideDirection.LEFT, 100L))
+        assertEquals("four 2s become two 4s, not one 8", 4, e.debugAt(4, 0)?.value)
+        assertEquals(4, e.debugAt(4, 1)?.value)
+        assertEquals(2, e.debugTileCount())
+    }
+
+    @Test
+    fun `sliding up leaves tiles floating because gravity is off`() {
+        val e = planning()
+        e.debugPlace(ROWS - 1, 2, 16)
+
+        assertTrue(e.slide(SlideDirection.UP, 100L))
+        assertEquals("the tile is now hanging at the ceiling", 16, e.debugAt(0, 2)?.value)
+        assertTrue("floating is legal mid-Plan", e.debugFloatingTiles() > 0)
+    }
+
+    @Test
+    fun `gravity reapplies and cascades when the plan window closes`() {
+        val e = planning()
+        // Two 8s parked in mid-air in the same column, with a gap beneath them.
+        e.debugPlace(0, 2, 8)
+        e.debugPlace(1, 2, 8)
+
+        e.tick(PLAN_DURATION_MS)
+
+        assertEquals(GameStatus.PLAYING, e.status)
+        assertEquals("they should have fallen and merged", 16, e.debugAt(ROWS - 1, 2)?.value)
+        assertEquals(0, e.debugFloatingTiles())
+        assertEquals(0, e.debugUnmergedPairs())
+    }
+
+    @Test
+    fun `a slide never moves a locked trophy`() {
+        val e = planning()
+        e.debugPlace(ROWS - 1, 0, TROPHY_VALUE, locked = true)
+        e.debugPlace(ROWS - 1, 4, 32)
+
+        assertTrue(e.slide(SlideDirection.LEFT, 100L))
+        assertTrue("the trophy stays put", e.debugAt(ROWS - 1, 0)?.locked == true)
+        assertEquals("the loose tile packs against it", 32, e.debugAt(ROWS - 1, 1)?.value)
+    }
+
+    @Test
+    fun `a slide that changes nothing reports no movement`() {
+        val e = planning()
+        e.debugPlace(4, 0, 2)
+        e.debugPlace(4, 1, 8)
+        assertFalse("already packed left with nothing to merge", e.slide(SlideDirection.LEFT, 100L))
+    }
+
+    @Test
+    fun `sliding is rejected outside a plan window`() {
+        val e = blankPlaying()
+        e.debugPlace(4, 3, 2)
+        assertFalse(e.slide(SlideDirection.LEFT, 100L))
+        assertEquals("the tile must not have moved", 2, e.debugAt(4, 3)?.value)
+    }
+
+    @Test
+    fun `slide merges pay the combo bonus`() {
+        val e = planning()
+        for (col in 0 until 4) e.debugPlace(4, col, 4)
+
+        e.slide(SlideDirection.LEFT, 100L)
+        // 8 at depth 1 (x1.0) then 8 at depth 2 (x1.5) = 8 + 12.
+        assertEquals(20, e.score)
+    }
+
     // ------------------------------------------------------------ fuzz
 
     @Test
@@ -534,5 +667,6 @@ class GameEngineTest {
         assertEquals(TROPHY_VALUE, snap.nextTrophyValue)
         assertEquals(1.0, snap.scoreMultiplier, 1e-9)
         assertTrue("interpolation needs a positive step length", snap.stepDurationMs > 0)
+        assertEquals(POWER_MAX_CHARGES, snap.planCharges)
     }
 }

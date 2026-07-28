@@ -12,7 +12,8 @@ import kotlin.random.Random
 class GameEngine(
     private val rng: Random = Random.Default,
     initialDeleteBank: PowerBank = PowerBank(),
-    initialSlowBank: PowerBank = PowerBank()
+    initialSlowBank: PowerBank = PowerBank(),
+    initialPlanBank: PowerBank = PowerBank()
 ) {
 
     private val grid: Array<Array<Tile?>> = Array(ROWS) { arrayOfNulls<Tile>(COLS) }
@@ -63,8 +64,11 @@ class GameEngine(
         private set
     var slowBank: PowerBank = initialSlowBank
         private set
+    var planBank: PowerBank = initialPlanBank
+        private set
 
     private var slowExpiresAtMs: Long = 0L
+    private var planExpiresAtMs: Long = 0L
     var softDrop: Boolean = false
 
     private var lastStepMs: Long = 0L
@@ -85,6 +89,7 @@ class GameEngine(
         trophies.clear()
         lastComboDepth = 0
         slowExpiresAtMs = 0L
+        planExpiresAtMs = 0L
         softDrop = false
         pendingEvents.clear()
         queue.clear()
@@ -95,8 +100,14 @@ class GameEngine(
         markDirty()
     }
 
-    /** Halts gravity without discarding the run. Only meaningful while playing. */
-    fun pause() {
+    /**
+     * Halts gravity without discarding the run.
+     *
+     * Pausing out of a Plan window ends the Plan rather than freezing its timer —
+     * otherwise pause is an unlimited-duration Plan, which is the whole power for free.
+     */
+    fun pause(nowMs: Long) {
+        if (status == GameStatus.PLANNING) endPlan(nowMs)
         if (status != GameStatus.PLAYING) return
         status = GameStatus.PAUSED
         softDrop = false
@@ -231,8 +242,13 @@ class GameEngine(
     fun tick(nowMs: Long): List<GameEvent> {
         deleteBank = deleteBank.detectClockRollback(nowMs).refresh(nowMs)
         slowBank = slowBank.detectClockRollback(nowMs).refresh(nowMs)
+        planBank = planBank.detectClockRollback(nowMs).refresh(nowMs)
 
         when (status) {
+            GameStatus.PLANNING -> {
+                if (nowMs >= planExpiresAtMs) endPlan(nowMs)
+                return drainEvents()
+            }
             GameStatus.CELEBRATING -> {
                 if (nowMs >= celebrateUntilMs) {
                     status = GameStatus.PLAYING
@@ -507,6 +523,166 @@ class GameEngine(
     /** Convenience overload targeting the lowest occupied row. */
     fun useDeleteRow(nowMs: Long): Boolean = useDeleteRowAt(lowestOccupiedRow(), nowMs)
 
+    /**
+     * Suspend gravity for [PLAN_DURATION_MS] and hand the player a 2048 board.
+     *
+     * The falling tile is frozen where it is and takes no part in the sliding — it is in
+     * the air, not on the board.
+     */
+    fun usePlan(nowMs: Long): Boolean {
+        if (status != GameStatus.PLAYING) return false
+        planBank = planBank.refresh(nowMs)
+        if (planBank.charges <= 0) return false
+        planBank = planBank.spend(nowMs)
+        planExpiresAtMs = nowMs + PLAN_DURATION_MS
+        status = GameStatus.PLANNING
+        softDrop = false
+        pendingEvents += GameEvent.PowerUsed
+        markDirty()
+        return true
+    }
+
+    /** Milliseconds left in the Plan window, or 0 when it is not running. */
+    fun planRemainingMs(nowMs: Long): Long =
+        if (status == GameStatus.PLANNING) (planExpiresAtMs - nowMs).coerceAtLeast(0L) else 0L
+
+    /**
+     * Gravity returns. Everything settles and cascades in one go, which is the whole
+     * point of having been allowed to stack tiles in mid-air for fifteen seconds.
+     */
+    private fun endPlan(nowMs: Long) {
+        status = GameStatus.PLAYING
+        planExpiresAtMs = 0L
+        lastStepMs = nowMs
+        resolveBoard(null, nowMs)
+        if (status == GameStatus.PLAYING) restoreFallingAfterPlan(nowMs)
+        markDirty()
+    }
+
+    /**
+     * Put the frozen tile somewhere legal again.
+     *
+     * Sliding upward can leave a tile sitting where the falling one was hanging. After
+     * gravity resolves, a column's free cells are contiguous from the top, so the lowest
+     * free cell in that column is the natural place to drop it back to.
+     */
+    private fun restoreFallingAfterPlan(nowMs: Long) {
+        val current = falling ?: return
+        if (grid[current.row][current.col] == null) return
+
+        var landing = -1
+        for (row in 0 until ROWS) {
+            if (grid[row][current.col] == null) landing = row else break
+        }
+        if (landing >= 0) {
+            falling = current.copy(row = landing)
+            return
+        }
+        // That column filled to the ceiling; try any other.
+        val col = spawnColumn()
+        if (col < 0) {
+            status = GameStatus.GAME_OVER
+            falling = null
+            pendingEvents += GameEvent.GameOver
+        } else {
+            falling = current.copy(row = 0, col = col)
+        }
+    }
+
+    /**
+     * One 2048 swipe: every line compacts toward [direction], and equal neighbours merge
+     * once each. Locked trophies are immovable and split a line into segments that
+     * compact independently, so a trophy never gets shunted out of its corner.
+     *
+     * Returns true when anything actually moved — a swipe that changes nothing should
+     * not cost the player their arrangement or fire feedback.
+     */
+    fun slide(direction: SlideDirection, nowMs: Long): Boolean {
+        if (status != GameStatus.PLANNING) return false
+
+        var moved = false
+        val lines: List<List<Pair<Int, Int>>> = when (direction) {
+            SlideDirection.LEFT ->
+                (0 until ROWS).map { row -> (0 until COLS).map { col -> row to col } }
+            SlideDirection.RIGHT ->
+                (0 until ROWS).map { row -> (COLS - 1 downTo 0).map { col -> row to col } }
+            SlideDirection.UP ->
+                (0 until COLS).map { col -> (0 until ROWS).map { row -> row to col } }
+            SlideDirection.DOWN ->
+                (0 until COLS).map { col -> (ROWS - 1 downTo 0).map { row -> row to col } }
+        }
+
+        for (line in lines) {
+            if (status != GameStatus.PLANNING) break   // a trophy can interrupt mid-slide
+            if (slideLine(line, nowMs)) moved = true
+        }
+        if (moved) markDirty()
+        return moved
+    }
+
+    /** Splits one line on locked tiles and compacts each free run toward the head. */
+    private fun slideLine(line: List<Pair<Int, Int>>, nowMs: Long): Boolean {
+        var changed = false
+        var segment = ArrayList<Pair<Int, Int>>()
+        for (coord in line) {
+            val (row, col) = coord
+            if (grid[row][col]?.locked == true) {
+                if (segment.isNotEmpty() && slideSegment(segment, nowMs)) changed = true
+                segment = ArrayList()
+            } else {
+                segment.add(coord)
+            }
+        }
+        if (segment.isNotEmpty() && slideSegment(segment, nowMs)) changed = true
+        return changed
+    }
+
+    /**
+     * Compacts one run of cells toward index 0, merging equal neighbours.
+     *
+     * Each tile merges at most once per swipe — the classic 2048 rule. Without it a row
+     * of four 2s would collapse to a single 8 in one move instead of two 4s.
+     */
+    private fun slideSegment(coords: List<Pair<Int, Int>>, nowMs: Long): Boolean {
+        val tiles = ArrayList<Tile>(coords.size)
+        for ((row, col) in coords) grid[row][col]?.let { tiles.add(it) }
+        if (tiles.isEmpty()) return false
+
+        val result = ArrayList<Tile>(tiles.size)
+        var index = 0
+        var merges = 0
+        while (index < tiles.size) {
+            val tile = tiles[index]
+            val next = tiles.getOrNull(index + 1)
+            if (next != null && tile.value == next.value) {
+                val destination = coords[result.size]
+                tile.value *= 2
+                tile.poppedAtMs = nowMs
+                merges++
+                awardScore(tile.value, merges)
+                pendingEvents += GameEvent.Merged(
+                    tile.value, destination.first, destination.second, merges
+                )
+                result.add(tile)
+                checkMilestone(tile.value, nowMs)
+                if (status != GameStatus.PLANNING) return true   // trophy cleared the board
+                index += 2
+            } else {
+                result.add(tile)
+                index += 1
+            }
+        }
+
+        var changed = result.size != tiles.size
+        for ((slot, coord) in coords.withIndex()) {
+            val (row, col) = coord
+            val replacement = result.getOrNull(slot)
+            if (grid[row][col] !== replacement) changed = true
+            grid[row][col] = replacement
+        }
+        return changed
+    }
+
     fun useSlow(nowMs: Long): Boolean {
         if (status != GameStatus.PLAYING) return false
         slowBank = slowBank.refresh(nowMs)
@@ -585,6 +761,8 @@ class GameEngine(
             lastComboDepth = lastComboDepth,
             deleteCharges = deleteBank.charges,
             slowCharges = slowBank.charges,
+            planCharges = planBank.charges,
+            planExpiresAtMs = planExpiresAtMs,
             stepStartMs = lastStepMs,
             stepDurationMs = currentIntervalMs(nowMs)
         )
@@ -596,7 +774,9 @@ class GameEngine(
         return HudTimers(
             deleteRegenRemainingSec = toSeconds(deleteBank.regenRemainingMs(nowMs)),
             slowRegenRemainingSec = toSeconds(slowBank.regenRemainingMs(nowMs)),
-            slowActiveRemainingSec = toSeconds((slowExpiresAtMs - nowMs).coerceAtLeast(0L))
+            slowActiveRemainingSec = toSeconds((slowExpiresAtMs - nowMs).coerceAtLeast(0L)),
+            planRegenRemainingSec = toSeconds(planBank.regenRemainingMs(nowMs)),
+            planActiveRemainingSec = toSeconds(planRemainingMs(nowMs))
         )
     }
 
@@ -655,6 +835,7 @@ class GameEngine(
         trophies.clear(); trophies.addAll(state.trophies)
         lastComboDepth = 0
         slowExpiresAtMs = 0L
+        planExpiresAtMs = 0L
         softDrop = false
         pendingEvents.clear()
 

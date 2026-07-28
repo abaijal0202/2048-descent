@@ -35,11 +35,15 @@ import com.digiboxx.descent2048.game.BoardSnapshot
 import com.digiboxx.descent2048.game.COLS
 import com.digiboxx.descent2048.game.DANGER_CLEARANCE
 import com.digiboxx.descent2048.game.GameStatus
+import com.digiboxx.descent2048.game.PLAN_DURATION_MS
 import com.digiboxx.descent2048.game.ROWS
+import com.digiboxx.descent2048.game.SlideDirection
 import com.digiboxx.descent2048.ui.theme.AccentCyan
 import com.digiboxx.descent2048.ui.theme.AccentPink
+import com.digiboxx.descent2048.ui.theme.TrophyGold
 import com.digiboxx.descent2048.ui.theme.tileBackground
 import com.digiboxx.descent2048.ui.theme.tileForeground
+import kotlin.math.abs
 import kotlin.math.PI
 import kotlin.math.sin
 
@@ -67,9 +71,11 @@ fun BoardCanvas(
     snapshot: BoardSnapshot,
     cellSize: Dp,
     deleteArmed: Boolean,
+    planning: Boolean,
     onMoveTo: (Int) -> Unit,
     onHardDrop: () -> Unit,
     onDeleteRowAt: (Int) -> Unit,
+    onSlide: (SlideDirection) -> Unit,
     canDeleteRow: (Int) -> Boolean,
     currentColumn: () -> Int,
     modifier: Modifier = Modifier
@@ -106,8 +112,41 @@ fun BoardCanvas(
                     )
                 }
             }
-            .pointerInput(cellPx, deleteArmed) {
-                if (deleteArmed) return@pointerInput
+            .pointerInput(cellPx, planning) {
+                if (!planning) return@pointerInput
+
+                // One swipe per gesture, exactly like 2048. Firing continuously while the
+                // finger moves would burn the whole 15 seconds in a single drag.
+                var totalX = 0f
+                var totalY = 0f
+                var fired = false
+                val threshold = cellPx * 0.55f
+
+                detectDragGestures(
+                    onDragStart = { totalX = 0f; totalY = 0f; fired = false },
+                    onDragEnd = { fired = false },
+                    onDragCancel = { fired = false },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        if (fired) return@detectDragGestures
+                        totalX += dragAmount.x
+                        totalY += dragAmount.y
+                        if (abs(totalX) < threshold && abs(totalY) < threshold) {
+                            return@detectDragGestures
+                        }
+                        fired = true
+                        onSlide(
+                            if (abs(totalX) > abs(totalY)) {
+                                if (totalX > 0) SlideDirection.RIGHT else SlideDirection.LEFT
+                            } else {
+                                if (totalY > 0) SlideDirection.DOWN else SlideDirection.UP
+                            }
+                        )
+                    }
+                )
+            }
+            .pointerInput(cellPx, deleteArmed, planning) {
+                if (deleteArmed || planning) return@pointerInput
 
                 var startColumn = 0
                 var accumulatedX = 0f
@@ -172,12 +211,16 @@ fun BoardCanvas(
 
             val falling = snapshot.falling
             if (falling != null) {
-                drawLandingGuide(
-                    row = snapshot.landingRow,
-                    col = falling.col,
-                    cellPx = cellPx,
-                    willMerge = snapshot.willMergeOnLanding
-                )
+                // With gravity suspended there is nowhere for the tile to land, so a
+                // landing guide would be pointing at a lie.
+                if (!planning) {
+                    drawLandingGuide(
+                        row = snapshot.landingRow,
+                        col = falling.col,
+                        cellPx = cellPx,
+                        willMerge = snapshot.willMergeOnLanding
+                    )
+                }
                 drawTile(
                     rowF = fallingRow(snapshot, nowMs),
                     col = falling.col,
@@ -185,11 +228,13 @@ fun BoardCanvas(
                     locked = false,
                     scale = 1f,
                     cellPx = cellPx,
-                    textMeasurer = textMeasurer
+                    textMeasurer = textMeasurer,
+                    alpha = if (planning) 0.45f else 1f
                 )
             }
 
             if (deleteArmed) drawDeleteTargets(cellPx, canDeleteRow, nowMs)
+            if (planning) drawPlanTimer(cellPx, snapshot.planExpiresAtMs, nowMs)
         }
     }
 }
@@ -222,6 +267,8 @@ private fun describeBoard(snapshot: BoardSnapshot): String {
     val falling = snapshot.falling
     val head = when (snapshot.status) {
         GameStatus.READY -> "Game not started."
+        GameStatus.PLANNING ->
+            "Plan mode. Gravity is off, swipe to slide the whole board."
         GameStatus.PAUSED -> "Game paused."
         GameStatus.GAME_OVER -> "Game over."
         GameStatus.CELEBRATING -> "Trophy earned."
@@ -272,6 +319,31 @@ private fun DrawScope.drawDangerZone(cellPx: Float, clearance: Int, nowMs: Long)
     )
 }
 
+/**
+ * The Plan countdown, pinned across the top of the board.
+ *
+ * Drawn from the frame clock rather than the second-quantised HUD value so it drains
+ * smoothly, and it turns from gold to pink over the last third as a second, non-numeric
+ * signal that time is nearly up.
+ */
+private fun DrawScope.drawPlanTimer(cellPx: Float, expiresAtMs: Long, nowMs: Long) {
+    val remaining = (expiresAtMs - nowMs).coerceAtLeast(0L).toFloat()
+    val fraction = (remaining / PLAN_DURATION_MS.toFloat()).coerceIn(0f, 1f)
+    val barHeight = cellPx * 0.16f
+    val boardWidth = COLS * cellPx
+
+    drawRect(
+        color = Color.Black.copy(alpha = 0.45f),
+        topLeft = Offset(0f, 0f),
+        size = Size(boardWidth, barHeight)
+    )
+    drawRect(
+        color = if (fraction < 0.33f) AccentPink else TrophyGold,
+        topLeft = Offset(0f, 0f),
+        size = Size(boardWidth * fraction, barHeight)
+    )
+}
+
 /** Rows that Delete Row could clear, outlined while the player is choosing one. */
 private fun DrawScope.drawDeleteTargets(
     cellPx: Float,
@@ -304,7 +376,8 @@ private fun DrawScope.drawTile(
     locked: Boolean,
     scale: Float,
     cellPx: Float,
-    textMeasurer: TextMeasurer
+    textMeasurer: TextMeasurer,
+    alpha: Float = 1f
 ) {
     val padding = cellPx * 0.07f
     val baseSize = cellPx - padding * 2
@@ -317,7 +390,7 @@ private fun DrawScope.drawTile(
     val radius = CornerRadius(cellPx * 0.19f, cellPx * 0.19f)
 
     drawRoundRect(
-        color = tileBackground(value),
+        color = tileBackground(value).copy(alpha = alpha),
         topLeft = topLeft,
         size = size,
         cornerRadius = radius
@@ -345,7 +418,7 @@ private fun DrawScope.drawTile(
     val layout: TextLayoutResult = textMeasurer.measure(
         text = value.toString(),
         style = TextStyle(
-            color = tileForeground(value),
+            color = tileForeground(value).copy(alpha = alpha),
             fontSize = (fontSizePx / density).sp,
             fontWeight = FontWeight.ExtraBold
         )

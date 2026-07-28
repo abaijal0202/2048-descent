@@ -30,7 +30,7 @@ Android dependencies at all** — no `Context`, no coroutines, no `System.curren
 Every method that needs the time takes it as a parameter.
 
 That is deliberate. It means the entire rule set runs as fast JVM unit tests with no
-emulator, and it is why `GameEngineTest` can fuzz sixteen thousand pieces in well under a
+emulator, and it is why `GameEngineTest` can fuzz ten thousand pieces in well under a
 second. Keep it that way: if you find yourself importing `android.*` into the `game`
 package, the logic probably belongs in the ViewModel instead.
 
@@ -71,10 +71,27 @@ frame.
 - Tiles enter in the middle column, or the nearest free column when the middle is full.
   The game only ends once the entire top row is blocked.
 - Fall speed increases 20% at each of 512, 1024, 2048, 4096 and 8192. These compound.
-- Two powers, 3 charges each, +1 charge every 30 minutes:
+- Three powers, 3 charges each, +1 charge every 30 minutes:
   - **Delete Row** — tap the power, then **tap the row you want cleared**. The board
     re-settles and re-resolves afterwards.
   - **Slow** — stretches the fall interval for 30 seconds.
+  - **Plan** — see below.
+
+### Plan
+
+For 15 seconds, **gravity switches off entirely and the board becomes a plain 2048 grid**.
+Swipe (or use the four arrows) to slide every tile in that direction; equal tiles merge on
+contact, each tile merging at most once per swipe, exactly like classic 2048. Nothing
+falls, so you can deliberately park tiles in mid-air.
+
+When the timer expires gravity returns and the whole board settles and cascades at once —
+which is where the payoff is, because a structure assembled in mid-air collapses into one
+long combo chain.
+
+Locked trophies do not move and split each line into segments that compact independently,
+so a trophy can never be shunted out of its corner. Pausing during Plan **ends** the Plan
+rather than freezing its timer; otherwise pause would be an unlimited-duration Plan for
+free.
 
 ### Trophies
 
@@ -102,6 +119,10 @@ where the player was aiming.
 
 ## Feel
 
+- The board is **6 x 10** rather than the original 7 x 13. Cell size is what makes a
+  four-digit tile legible, and height is the binding constraint, so fewer rows is what
+  buys the size — dropping to 6 columns is what stops the width budget capping it
+  straight back. A cell goes from ~44dp to ~52–62dp depending on the phone.
 - The falling tile is **interpolated** between gravity steps rather than jumping a whole
   cell at a time, and merged tiles **pop** using the `poppedAtMs` the engine already
   records.
@@ -116,7 +137,7 @@ Everything balance-related is a constant in `game/Model.kt`:
 
 | Constant | Meaning |
 |---|---|
-| `COLS`, `ROWS` | Board size (7 x 13) |
+| `COLS`, `ROWS` | Board size (6 x 10) |
 | `BASE_INTERVAL_MS` | Starting fall interval |
 | `SPAWN_TABLE` | Value spawn weights |
 | `MERGE_HORIZONTAL` | `false` reverts to vertical-only merging |
@@ -126,6 +147,7 @@ Everything balance-related is a constant in `game/Model.kt`:
 | `TROPHY_SCORE_BONUS` | Score multiplier gained per trophy |
 | `POWER_REGEN_MS` | Charge recharge interval |
 | `SLOW_FACTOR`, `SLOW_DURATION_MS` | Slow power strength and duration |
+| `PLAN_DURATION_MS` | Length of the Plan window |
 | `DANGER_CLEARANCE` | How close to the ceiling the warning appears |
 
 ## Testing
@@ -133,11 +155,18 @@ Everything balance-related is a constant in `game/Model.kt`:
 `GameEngineTest` covers merge rules (including the horizontal-after-vertical case),
 combo scoring, the trophy ladder, gravity around locked trophies, movement blocking,
 speed milestones, power charges and regeneration, targeted row deletion, spawn fallback,
-pause, save/restore round trips, the render-revision contract, and a fuzz run asserting
-the board is never left with an unresolved pair or a floating tile.
+pause, save/restore round trips, the render-revision contract, the Plan window and its
+2048 slide rules, and a fuzz run asserting the board is never left with an unresolved
+pair or a floating tile.
 
 Balance signal from the fuzz run: with **random** column choice the best tile reached is
-512 and 2048 never happens. The goal is skill-gated, not luck-gated.
+256 and 2048 never happens. The goal is skill-gated, not luck-gated.
+
+That number was 512 on the old 7 x 13 board. Going to 6 x 10 for readability cost about
+34% of the play area and the fuzz felt it immediately — random runs are now roughly a
+third shorter. The fuzz never spends a Plan charge, so it understates real play, but if
+the board ever starts feeling punishing rather than demanding, this is the number to
+watch and `ROWS` is the dial.
 
 ## Known gaps
 

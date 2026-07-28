@@ -1,8 +1,15 @@
 package com.digiboxx.descent2048.game
 
-/** Board dimensions. Changing these is safe — nothing hard-codes 7 or 13. */
-const val COLS = 7
-const val ROWS = 13
+/**
+ * Board dimensions. Changing these is safe — nothing hard-codes the numbers.
+ *
+ * 6 x 10 rather than the original 7 x 13 because cell size is what makes a four-digit
+ * tile readable, and the binding constraint is height. Dropping to 10 rows is what buys
+ * the size; dropping to 6 columns is what stops the width budget capping it straight
+ * back. See the sizing note in GameScreen.
+ */
+const val COLS = 6
+const val ROWS = 10
 
 /** Preferred spawn column. Tiles shift to the nearest free column if this one is full. */
 val START_COL = COLS / 2
@@ -27,6 +34,16 @@ const val POWER_REGEN_MS = 30L * 60L * 1000L
 
 /** Maximum stored charges per power. */
 const val POWER_MAX_CHARGES = 3
+
+/**
+ * How long one Plan activation lasts.
+ *
+ * Plan suspends gravity entirely and hands the player a plain 2048 board for the
+ * duration: slide in any of four directions, equal tiles merge on contact, nothing
+ * falls. When the timer runs out gravity comes back and the whole board settles and
+ * cascades at once, which is where the payoff is.
+ */
+const val PLAN_DURATION_MS = 15_000L
 
 /**
  * The ladder of trophy values.
@@ -99,7 +116,10 @@ data class FallingTile(
     val col: Int
 )
 
-enum class GameStatus { READY, PLAYING, PAUSED, CELEBRATING, GAME_OVER }
+enum class GameStatus { READY, PLAYING, PLANNING, PAUSED, CELEBRATING, GAME_OVER }
+
+/** The four directions a Plan slide can go. */
+enum class SlideDirection { LEFT, RIGHT, UP, DOWN }
 
 /** One-shot things the UI reacts to (sound, haptics, overlays). */
 sealed interface GameEvent {
@@ -113,8 +133,8 @@ sealed interface GameEvent {
     data object PowerUsed : GameEvent
 }
 
-/** Which of the two powers is being referenced. */
-enum class PowerType { DELETE_ROW, SLOW }
+/** Which power is being referenced. */
+enum class PowerType { DELETE_ROW, SLOW, PLAN }
 
 /**
  * Immutable render model. The engine mutates internally for speed; the UI only ever
@@ -143,6 +163,9 @@ data class BoardSnapshot(
     val lastComboDepth: Int,
     val deleteCharges: Int,
     val slowCharges: Int,
+    val planCharges: Int,
+    /** Wall-clock ms the Plan window ends; drives the smooth countdown bar. */
+    val planExpiresAtMs: Long,
     /** Wall-clock ms at which the current gravity step began; drives fall interpolation. */
     val stepStartMs: Long,
     /** Length of the current gravity step; drives fall interpolation. */
@@ -160,7 +183,9 @@ data class BoardSnapshot(
 data class HudTimers(
     val deleteRegenRemainingSec: Long = 0,
     val slowRegenRemainingSec: Long = 0,
-    val slowActiveRemainingSec: Long = 0
+    val slowActiveRemainingSec: Long = 0,
+    val planRegenRemainingSec: Long = 0,
+    val planActiveRemainingSec: Long = 0
 )
 
 data class CellView(
