@@ -68,8 +68,10 @@ frame.
 - Equal numbers merge when they touch — **vertically or horizontally**, not diagonally.
   Merges chain until the board is stable.
 - The next 3 tiles are previewed.
-- Tiles enter in the middle column, or the nearest free column when the middle is full.
-  The game only ends once the entire top row is blocked.
+- Every tile enters in the middle column. **Tetris rule: if that spawn cell is blocked,
+  the run is over** — the spawn never relocates to a free column, because letting the
+  stack reach the top is exactly how you lose. The top of the board pulses in warning
+  as the stack closes in.
 - Fall speed increases 20% at each of 512, 1024, 2048, 4096 and 8192. These compound.
 - Three powers, 3 charges each, +1 charge every 30 minutes:
   - **Delete Row** — tap the power, then **tap the row you want cleared**. The board
@@ -154,8 +156,8 @@ Everything balance-related is a constant in `game/Model.kt`:
 
 `GameEngineTest` covers merge rules (including the horizontal-after-vertical case),
 combo scoring, the trophy ladder, gravity around locked trophies, movement blocking,
-speed milestones, power charges and regeneration, targeted row deletion, spawn fallback,
-pause, save/restore round trips, the render-revision contract, the Plan window and its
+speed milestones, power charges and regeneration, targeted row deletion, the blocked-spawn
+loss condition, pause, save/restore round trips, the render-revision contract, the Plan window and its
 2048 slide rules, and a fuzz run asserting the board is never left with an unresolved
 pair or a floating tile.
 

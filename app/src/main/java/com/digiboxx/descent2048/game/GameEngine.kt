@@ -132,36 +132,28 @@ class GameEngine(
     }
 
     /**
-     * The column a new tile enters on: the middle when it is free, otherwise the nearest
-     * free column to it, or -1 when the whole top row is full.
+     * Every tile enters at [START_COL].
      *
-     * Falling back to a neighbour matters. Spawning only ever at the middle meant a
-     * single tall stack in the centre ended the game while six columns sat empty, which
-     * reads as the game cheating rather than the player losing.
+     * Tetris rule: if the spawn cell is blocked, the run is over. There is deliberately
+     * no hunting for a free column elsewhere — letting the stack reach the top *is* how
+     * you lose, and quietly relocating the spawn robs that of its meaning. The danger
+     * wash over the top rows is the warning that it is coming.
      */
-    private fun spawnColumn(): Int {
-        if (grid[0][START_COL] == null) return START_COL
-        for (offset in 1 until COLS) {
-            val right = START_COL + offset
-            if (right < COLS && grid[0][right] == null) return right
-            val left = START_COL - offset
-            if (left >= 0 && grid[0][left] == null) return left
-        }
-        return -1
-    }
-
     private fun spawnNext() {
-        val col = spawnColumn()
-        if (col < 0) {
-            status = GameStatus.GAME_OVER
-            falling = null
-            pendingEvents += GameEvent.GameOver
-            markDirty()
+        if (grid[0][START_COL] != null) {
+            endRun()
             return
         }
         val value = queue.removeFirst()
         queue.addLast(randomSpawnValue())
-        falling = FallingTile(value = value, row = 0, col = col)
+        falling = FallingTile(value = value, row = 0, col = START_COL)
+        markDirty()
+    }
+
+    private fun endRun() {
+        status = GameStatus.GAME_OVER
+        falling = null
+        pendingEvents += GameEvent.GameOver
         markDirty()
     }
 
@@ -555,7 +547,7 @@ class GameEngine(
         planExpiresAtMs = 0L
         lastStepMs = nowMs
         resolveBoard(null, nowMs)
-        if (status == GameStatus.PLAYING) restoreFallingAfterPlan(nowMs)
+        if (status == GameStatus.PLAYING) restoreFallingAfterPlan()
         markDirty()
     }
 
@@ -566,7 +558,7 @@ class GameEngine(
      * gravity resolves, a column's free cells are contiguous from the top, so the lowest
      * free cell in that column is the natural place to drop it back to.
      */
-    private fun restoreFallingAfterPlan(nowMs: Long) {
+    private fun restoreFallingAfterPlan() {
         val current = falling ?: return
         if (grid[current.row][current.col] == null) return
 
@@ -575,17 +567,12 @@ class GameEngine(
             if (grid[row][current.col] == null) landing = row else break
         }
         if (landing >= 0) {
+            // Stay in the same column — shunting the tile sideways would be a free move.
             falling = current.copy(row = landing)
-            return
-        }
-        // That column filled to the ceiling; try any other.
-        val col = spawnColumn()
-        if (col < 0) {
-            status = GameStatus.GAME_OVER
-            falling = null
-            pendingEvents += GameEvent.GameOver
         } else {
-            falling = current.copy(row = 0, col = col)
+            // The player stacked that column to the ceiling with gravity off. Nowhere
+            // left to put the tile, so the run is over on the same rule as a blocked spawn.
+            endRun()
         }
     }
 

@@ -367,28 +367,35 @@ class GameEngineTest {
     }
 
     @Test
-    fun `spawning falls back to a neighbour when the middle column is full`() {
+    fun `the run ends the moment the stack blocks the spawn cell`() {
         val e = blankPlaying()
+        // Only the spawn column is stacked; every other column is wide open. Gravity
+        // means a spawn cell can only be blocked by a column filled to the ceiling.
         for (row in 0 until ROWS) e.debugPlace(row, START_COL, if (row % 2 == 0) 2 else 8)
         e.debugSetFalling(64, 0, 0)
         e.hardDrop(1000L)
 
-        assertEquals("a full centre column must not end the game", GameStatus.PLAYING, e.status)
-        assertNotNull(e.falling)
-        assertTrue("the new tile should enter elsewhere", e.falling!!.col != START_COL)
+        assertEquals("reaching the top is how you lose", GameStatus.GAME_OVER, e.status)
+        assertNull("no tile should be left in play", e.falling)
+
+        // The whole point of the rule: the rest of the board was empty and it still ended.
+        for (col in 0 until COLS) {
+            if (col == START_COL || col == 0) continue
+            assertNull("column $col should still be empty", e.debugAt(ROWS - 1, col))
+        }
     }
 
     @Test
-    fun `game ends only once the whole top row is blocked`() {
+    fun `play continues while the spawn cell is still clear`() {
         val e = blankPlaying()
-        for (row in 0 until ROWS) {
-            for (col in 0 until COLS) {
-                e.debugPlace(row, col, if ((row + col) % 2 == 0) 2 else 8)
-            }
-        }
-        e.debugSetFalling(64, 0, 0)
+        // Stack a neighbouring column to the ceiling; the spawn column stays free.
+        val other = if (START_COL == 0) 1 else START_COL - 1
+        for (row in 0 until ROWS) e.debugPlace(row, other, if (row % 2 == 0) 2 else 8)
+        e.debugSetFalling(64, 0, START_COL)
         e.hardDrop(1000L)
-        assertEquals(GameStatus.GAME_OVER, e.status)
+
+        assertEquals(GameStatus.PLAYING, e.status)
+        assertEquals("the next tile still enters in the middle", START_COL, e.falling?.col)
     }
 
     @Test
@@ -584,6 +591,18 @@ class GameEngineTest {
         assertEquals("they should have fallen and merged", 16, e.debugAt(ROWS - 1, 2)?.value)
         assertEquals(0, e.debugFloatingTiles())
         assertEquals(0, e.debugUnmergedPairs())
+    }
+
+    @Test
+    fun `filling the frozen tile's column during plan ends the run`() {
+        val e = blankPlaying()
+        e.debugSetFalling(2, 0, START_COL)
+        assertTrue(e.usePlan(0L))
+        // Every cell of the spawn column occupied, so the frozen tile has nowhere to go.
+        for (row in 0 until ROWS) e.debugPlace(row, START_COL, if (row % 2 == 0) 2 else 8)
+
+        e.tick(PLAN_DURATION_MS)
+        assertEquals(GameStatus.GAME_OVER, e.status)
     }
 
     @Test
