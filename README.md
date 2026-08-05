@@ -1,10 +1,16 @@
-# 2048 Descent
+# 2048
 
-A falling-block number merger: Tetris-style descent, 2048-style merging.
+Two takes on 2048 in one app. The launch screen picks between them.
+
+- **2048 Descent** — a falling-block number merger: Tetris-style descent, 2048-style
+  merging on a 6 x 10 grid.
+- **2048 Merge** — a physics variant: numbered balls tumble into a curved bowl, roll to
+  the middle, and grow with every combination.
 
 ```
-prototype/index.html   Playable web version. The original design spec — open it in any browser.
+prototype/index.html   Playable web version of Descent. The original design spec.
 app/                   Android app (Kotlin + Jetpack Compose).
+store/                 Play Store listing copy and generated graphics.
 ```
 
 ## Build
@@ -34,14 +40,21 @@ emulator, and it is why `GameEngineTest` can fuzz ten thousand pieces in well un
 second. Keep it that way: if you find yourself importing `android.*` into the `game`
 package, the logic probably belongs in the ViewModel instead.
 
+Both engines follow this rule, which is why a bowl full of colliding circles can be
+verified without ever launching an emulator.
+
 ```
-game/Model.kt        Constants, Tile, snapshots, saved-game shape, events
-game/Powers.kt       Charge banks and regeneration
-game/GameEngine.kt   Gravity, merging, milestones, trophies, powers
-data/GameStorage.kt  SharedPreferences persistence, including the in-progress run
-feedback/Haptics.kt  Turns GameEvents into vibration
-GameViewModel.kt     Game loop, bridges engine to Compose
-ui/                  Compose rendering and input
+game/Model.kt         Descent: constants, Tile, snapshots, saved-game shape, events
+game/Powers.kt        Descent: charge banks and regeneration
+game/GameEngine.kt    Descent: gravity, merging, milestones, trophies, powers
+merge/MergeModel.kt   Merge: world constants, bowl geometry, Ball, snapshots
+merge/MergeEngine.kt  Merge: the physics solver and the merge rules
+data/GameStorage.kt   SharedPreferences persistence, including the in-progress run
+feedback/Haptics.kt   Turns game events into vibration
+GameViewModel.kt      Descent loop, bridges engine to Compose
+MergeViewModel.kt     Merge loop
+ui/HomeScreen.kt      The game picker
+ui/                   Compose rendering and input
 ```
 
 ### Rendering contract
@@ -62,7 +75,49 @@ Two details in here are load-bearing and easy to undo by accident:
 recomposing. Move that read into the composable body and you recompose the subtree every
 frame.
 
-## Rules
+## 2048 Merge
+
+Numbered balls drop into a bowl. Equal balls merge on contact, and every merge makes the
+result **physically bigger** — so the bowl fills faster than the numbers climb. Let the
+pile rest above the line and the run is over.
+
+The floor is a **circular arc, concave up**, which is what makes the game work: a flat
+floor lets balls stack in columns wherever they happen to land, while a bowl rolls
+everything toward the middle so contact is constant and the pile self-organises.
+
+### How the physics works
+
+The solver is **position-based**: integrate, push overlapping bodies apart over eight
+relaxation passes, then read velocity back off how far each ball actually moved. Deriving
+velocity from displacement rather than accumulating impulses means a constraint can never
+inject energy, so a deep pile settles instead of slowly boiling.
+
+Four details are load-bearing, and each one is guarded by a test:
+
+- **Fixed 120Hz timestep with an accumulator.** A variable timestep makes stacking both
+  non-deterministic and unstable — one long frame drives balls far enough into each other
+  that the solver cannot recover. It also means the tests exercise exactly the arithmetic
+  the device will.
+- **Damping is applied once per substep, never inside the relaxation loop.** Inside the
+  loop it compounds by the iteration count; at eight iterations even a gentle-looking
+  factor removes three quarters of the tangential velocity per substep, which pins every
+  ball where it lands and kills the rolling the bowl exists to create.
+- **The floor arc is only applied below the bowl's centre.** The bowl circle is closed, so
+  constraining against it everywhere puts an invisible ceiling across the top of the play
+  area — the pile would be squashed back down instead of overflowing, which is the exact
+  situation the game is supposed to end on.
+- **Merging is checked every substep, not once per frame.** The solver settles a contact
+  at exactly `rA + rB` and turns that correction into outward velocity, so a pair checked
+  only at frame boundaries can be pushed back out of reach before anyone looks. Merges
+  would then fire or not depending on how many substeps a frame happened to contain.
+  A small [MERGE_CONTACT_SLACK] on top makes resting contact reliable rather than a
+  floating-point coin flip.
+
+Ball radii are a hand-tuned table, not derived. The tempting rule — double the area each
+merge, so radius scales by sqrt(2) — compounds to roughly 45x across the ladder, which no
+phone screen can hold.
+
+## 2048 Descent rules
 
 - One numbered tile (2–64) falls at a time. Slide it to choose a column.
 - Equal numbers merge when they touch — **vertically or horizontally**, not diagonally.
@@ -153,6 +208,11 @@ Everything balance-related is a constant in `game/Model.kt`:
 | `DANGER_CLEARANCE` | How close to the ceiling the warning appears |
 
 ## Testing
+
+`MergeEngineTest` covers the bowl geometry, containment under load, tunnelling, rolling
+to the centre, settling, the merge rules and contact slack, combo scoring, the
+overflow loss condition and its grace period, determinism for a given seed, frame-rate
+independence, and the catch-up cap after a stall.
 
 `GameEngineTest` covers merge rules (including the horizontal-after-vertical case),
 combo scoring, the trophy ladder, gravity around locked trophies, movement blocking,

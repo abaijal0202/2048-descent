@@ -30,6 +30,18 @@ class GameStorage(context: Context) {
         get() = prefs.getInt(KEY_BEST_TILE, 0)
         set(value) = prefs.edit { putInt(KEY_BEST_TILE, value) }
 
+    /**
+     * Merge keeps its own high score. The two games score on completely different
+     * scales, so a shared best would make one of them permanently unbeatable.
+     */
+    var mergeHighScore: Int
+        get() = prefs.getInt(KEY_MERGE_HIGH_SCORE, 0)
+        set(value) = prefs.edit { putInt(KEY_MERGE_HIGH_SCORE, value) }
+
+    var mergeBestValue: Int
+        get() = prefs.getInt(KEY_MERGE_BEST_VALUE, 0)
+        set(value) = prefs.edit { putInt(KEY_MERGE_BEST_VALUE, value) }
+
     var trophyEarned: Boolean
         get() = prefs.getBoolean(KEY_TROPHY, false)
         set(value) = prefs.edit { putBoolean(KEY_TROPHY, value) }
@@ -149,5 +161,7 @@ class GameStorage(context: Context) {
         const val KEY_PLAN_CHARGES = "plan_charges"
         const val KEY_PLAN_REGEN = "plan_regen_at"
         const val KEY_SAVED_GAME = "saved_game"
+        const val KEY_MERGE_HIGH_SCORE = "merge_high_score"
+        const val KEY_MERGE_BEST_VALUE = "merge_best_value"
     }
 }

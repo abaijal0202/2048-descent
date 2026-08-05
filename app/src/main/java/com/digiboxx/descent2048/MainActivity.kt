@@ -2,6 +2,7 @@ package com.digiboxx.descent2048
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
@@ -12,17 +13,29 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.digiboxx.descent2048.data.GameStorage
+import com.digiboxx.descent2048.ui.GameChoice
 import com.digiboxx.descent2048.ui.GameScreen
+import com.digiboxx.descent2048.ui.HomeScreen
+import com.digiboxx.descent2048.ui.MergeScreen
 import com.digiboxx.descent2048.ui.theme.BgDeep
 import com.digiboxx.descent2048.ui.theme.Descent2048Theme
 
 class MainActivity : ComponentActivity() {
 
-    private val viewModel: GameViewModel by viewModels()
+    // Both are `by viewModels()` and therefore lazy: the one you never open is never
+    // constructed, so its game loop never starts.
+    private val descentViewModel: GameViewModel by viewModels()
+    private val mergeViewModel: MergeViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -35,7 +48,7 @@ class MainActivity : ComponentActivity() {
                         .windowInsetsPadding(WindowInsets.systemBars),
                     color = BgDeep
                 ) {
-                    GameRoot(viewModel)
+                    AppRoot(descentViewModel, mergeViewModel)
                 }
             }
         }
@@ -43,16 +56,28 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun GameRoot(viewModel: GameViewModel) {
+private fun AppRoot(descent: GameViewModel, merge: MergeViewModel) {
+    // Stored as an ordinal because rememberSaveable persists through a Bundle, and an
+    // Int is unambiguously safe there where an arbitrary enum is not.
+    var choiceOrdinal by rememberSaveable { mutableIntStateOf(GameChoice.HOME.ordinal) }
+    val choice = GameChoice.entries[choiceOrdinal]
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    // Without this the tile keeps falling while the player is in another app, and they
-    // come back to a game they have already lost.
-    DisposableEffect(lifecycleOwner) {
+    // Without this a tile keeps descending, or a pile keeps settling, while the player is
+    // in another app — and they come back to a game they have already lost.
+    DisposableEffect(lifecycleOwner, choice) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_PAUSE -> viewModel.onPause()
-                Lifecycle.Event.ON_RESUME -> viewModel.onResume()
+                Lifecycle.Event.ON_PAUSE -> when (choice) {
+                    GameChoice.DESCENT -> descent.onPause()
+                    GameChoice.MERGE -> merge.onPause()
+                    GameChoice.HOME -> Unit
+                }
+                Lifecycle.Event.ON_RESUME -> when (choice) {
+                    GameChoice.DESCENT -> descent.onResume()
+                    GameChoice.MERGE -> merge.onResume()
+                    GameChoice.HOME -> Unit
+                }
                 else -> Unit
             }
         }
@@ -60,26 +85,70 @@ private fun GameRoot(viewModel: GameViewModel) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    GameScreen(
-        snapshot = viewModel.snapshot,
-        hud = viewModel.hud,
-        highScore = viewModel.highScore,
-        deleteArmed = viewModel.deleteArmed,
-        hapticsEnabled = viewModel.hapticsEnabled,
-        onStart = viewModel::startGame,
-        onPause = viewModel::pause,
-        onResume = viewModel::resume,
-        onMove = viewModel::move,
-        onMoveTo = viewModel::moveTo,
-        onHardDrop = viewModel::hardDrop,
-        onSoftDrop = viewModel::setSoftDrop,
-        onArmDeleteRow = viewModel::armDeleteRow,
-        onDeleteRowAt = viewModel::deleteRowAt,
-        canDeleteRow = viewModel::canDeleteRow,
-        onSlow = viewModel::useSlow,
-        onPlan = viewModel::usePlan,
-        onSlide = viewModel::slide,
-        onToggleHaptics = viewModel::toggleHaptics,
-        currentColumn = viewModel::fallingColumn
-    )
+    // Back out to the picker rather than closing the app mid-run.
+    BackHandler(enabled = choice != GameChoice.HOME) {
+        when (choice) {
+            GameChoice.DESCENT -> descent.pause()
+            GameChoice.MERGE -> merge.pause()
+            GameChoice.HOME -> Unit
+        }
+        choiceOrdinal = GameChoice.HOME.ordinal
+    }
+
+    when (choice) {
+        GameChoice.HOME -> {
+            val context = androidx.compose.ui.platform.LocalContext.current
+            // Read straight from storage: the picker needs both games' bests, and asking
+            // a ViewModel would construct it and start its loop for nothing.
+            val storage = remember(context) { GameStorage(context.applicationContext) }
+            HomeScreen(
+                descentHighScore = storage.highScore,
+                mergeHighScore = storage.mergeHighScore,
+                onChoose = { choiceOrdinal = it.ordinal }
+            )
+        }
+
+        GameChoice.DESCENT -> GameScreen(
+            snapshot = descent.snapshot,
+            hud = descent.hud,
+            highScore = descent.highScore,
+            deleteArmed = descent.deleteArmed,
+            hapticsEnabled = descent.hapticsEnabled,
+            onStart = descent::startGame,
+            onPause = descent::pause,
+            onResume = descent::resume,
+            onMove = descent::move,
+            onMoveTo = descent::moveTo,
+            onHardDrop = descent::hardDrop,
+            onSoftDrop = descent::setSoftDrop,
+            onArmDeleteRow = descent::armDeleteRow,
+            onDeleteRowAt = descent::deleteRowAt,
+            canDeleteRow = descent::canDeleteRow,
+            onSlow = descent::useSlow,
+            onPlan = descent::usePlan,
+            onSlide = descent::slide,
+            onToggleHaptics = descent::toggleHaptics,
+            currentColumn = descent::fallingColumn,
+            onBack = {
+                descent.pause()
+                choiceOrdinal = GameChoice.HOME.ordinal
+            }
+        )
+
+        GameChoice.MERGE -> MergeScreen(
+            snapshot = merge.snapshot,
+            highScore = merge.highScore,
+            hapticsEnabled = merge.hapticsEnabled,
+            onStart = merge::startGame,
+            onPause = merge::pause,
+            onResume = merge::resume,
+            onAim = merge::aimAt,
+            onDrop = merge::drop,
+            onToggleHaptics = merge::toggleHaptics,
+            onBack = {
+                merge.pause()
+                choiceOrdinal = GameChoice.HOME.ordinal
+            }
+        )
+    }
 }

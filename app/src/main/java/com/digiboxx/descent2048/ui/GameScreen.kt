@@ -76,7 +76,8 @@ fun GameScreen(
     onPlan: () -> Unit,
     onSlide: (SlideDirection) -> Unit,
     onToggleHaptics: () -> Unit,
-    currentColumn: () -> Int
+    currentColumn: () -> Int,
+    onBack: () -> Unit
 ) {
     BoxWithConstraints(
         modifier = Modifier
@@ -114,7 +115,8 @@ fun GameScreen(
             HeaderRow(
                 snapshot = snapshot,
                 highScore = highScore,
-                onPause = onPause
+                onPause = onPause,
+                onBack = onBack
             )
             NextAndSpeedRow(snapshot = snapshot)
 
@@ -266,7 +268,12 @@ private fun trophyBody(snapshot: BoardSnapshot): String {
 }
 
 @Composable
-private fun HeaderRow(snapshot: BoardSnapshot, highScore: Int, onPause: () -> Unit) {
+private fun HeaderRow(
+    snapshot: BoardSnapshot,
+    highScore: Int,
+    onPause: () -> Unit,
+    onBack: () -> Unit
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -276,6 +283,16 @@ private fun HeaderRow(snapshot: BoardSnapshot, highScore: Int, onPause: () -> Un
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(6.dp))
+                .background(BgPanel2)
+                .pointerInput(Unit) { detectTapGestures { onBack() } }
+                .padding(horizontal = 8.dp, vertical = 3.dp)
+                .semantics { contentDescription = "Back to game selection" }
+        ) {
+            Text(text = "<", color = TextLight, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
         LabelledValue(label = "SCORE", value = snapshot.score.toString())
         LabelledValue(label = "BEST", value = highScore.toString())
         LabelledValue(
