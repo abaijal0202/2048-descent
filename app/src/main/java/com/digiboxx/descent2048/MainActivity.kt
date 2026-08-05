@@ -24,6 +24,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.digiboxx.descent2048.data.GameStorage
 import com.digiboxx.descent2048.ui.GameChoice
+import com.digiboxx.descent2048.ui.BlocksScreen
 import com.digiboxx.descent2048.ui.GameScreen
 import com.digiboxx.descent2048.ui.HomeScreen
 import com.digiboxx.descent2048.ui.MergeScreen
@@ -36,6 +37,7 @@ class MainActivity : ComponentActivity() {
     // constructed, so its game loop never starts.
     private val descentViewModel: GameViewModel by viewModels()
     private val mergeViewModel: MergeViewModel by viewModels()
+    private val blocksViewModel: BlocksViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -48,7 +50,7 @@ class MainActivity : ComponentActivity() {
                         .windowInsetsPadding(WindowInsets.systemBars),
                     color = BgDeep
                 ) {
-                    AppRoot(descentViewModel, mergeViewModel)
+                    AppRoot(descentViewModel, mergeViewModel, blocksViewModel)
                 }
             }
         }
@@ -56,7 +58,11 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun AppRoot(descent: GameViewModel, merge: MergeViewModel) {
+private fun AppRoot(
+    descent: GameViewModel,
+    merge: MergeViewModel,
+    blocks: BlocksViewModel
+) {
     // Stored as an ordinal because rememberSaveable persists through a Bundle, and an
     // Int is unambiguously safe there where an arbitrary enum is not.
     var choiceOrdinal by rememberSaveable { mutableIntStateOf(GameChoice.HOME.ordinal) }
@@ -71,11 +77,13 @@ private fun AppRoot(descent: GameViewModel, merge: MergeViewModel) {
                 Lifecycle.Event.ON_PAUSE -> when (choice) {
                     GameChoice.DESCENT -> descent.onPause()
                     GameChoice.MERGE -> merge.onPause()
+                    GameChoice.BLOCKS -> blocks.onPause()
                     GameChoice.HOME -> Unit
                 }
                 Lifecycle.Event.ON_RESUME -> when (choice) {
                     GameChoice.DESCENT -> descent.onResume()
                     GameChoice.MERGE -> merge.onResume()
+                    GameChoice.BLOCKS -> blocks.onResume()
                     GameChoice.HOME -> Unit
                 }
                 else -> Unit
@@ -90,6 +98,7 @@ private fun AppRoot(descent: GameViewModel, merge: MergeViewModel) {
         when (choice) {
             GameChoice.DESCENT -> descent.pause()
             GameChoice.MERGE -> merge.pause()
+            GameChoice.BLOCKS -> blocks.pause()
             GameChoice.HOME -> Unit
         }
         choiceOrdinal = GameChoice.HOME.ordinal
@@ -104,6 +113,7 @@ private fun AppRoot(descent: GameViewModel, merge: MergeViewModel) {
             HomeScreen(
                 descentHighScore = storage.highScore,
                 mergeHighScore = storage.mergeHighScore,
+                blocksHighScore = storage.blocksHighScore,
                 onChoose = { choiceOrdinal = it.ordinal }
             )
         }
@@ -147,6 +157,24 @@ private fun AppRoot(descent: GameViewModel, merge: MergeViewModel) {
             onToggleHaptics = merge::toggleHaptics,
             onBack = {
                 merge.pause()
+                choiceOrdinal = GameChoice.HOME.ordinal
+            }
+        )
+
+        GameChoice.BLOCKS -> BlocksScreen(
+            snapshot = blocks.snapshot,
+            highScore = blocks.highScore,
+            hapticsEnabled = blocks.hapticsEnabled,
+            onStart = blocks::startGame,
+            onPause = blocks::pause,
+            onResume = blocks::resume,
+            onMove = blocks::move,
+            onRotate = blocks::rotate,
+            onHardDrop = blocks::hardDrop,
+            onSoftDrop = blocks::setSoftDrop,
+            onToggleHaptics = blocks::toggleHaptics,
+            onBack = {
+                blocks.pause()
                 choiceOrdinal = GameChoice.HOME.ordinal
             }
         )

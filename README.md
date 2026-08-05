@@ -1,11 +1,17 @@
 # 2048
 
-Two takes on 2048 in one app. The launch screen picks between them.
+Three takes on 2048 in one app. The launch screen picks between them.
 
-- **2048 Descent** — a falling-block number merger: Tetris-style descent, 2048-style
-  merging on a 6 x 10 grid.
+- **2048 Descent** — a falling-block number merger: single tiles descend, merging
+  sideways and down on a 6 x 10 grid.
 - **2048 Merge** — a physics variant: numbered balls tumble into a curved bowl, roll to
   the middle, and grow with every combination.
+- **2048 Blocks** — four-cell tetromino shapes where every cell carries its own number,
+  governed by one rule: no two equal numbers may share a boundary.
+
+> **On the name.** Blocks is deliberately not called after the game it borrows its shapes
+> from. That name is a trademark whose owner enforces it aggressively against clones, and
+> the listing has to survive a store review.
 
 ```
 prototype/index.html   Playable web version of Descent. The original design spec.
@@ -49,10 +55,13 @@ game/Powers.kt        Descent: charge banks and regeneration
 game/GameEngine.kt    Descent: gravity, merging, milestones, trophies, powers
 merge/MergeModel.kt   Merge: world constants, bowl geometry, Ball, snapshots
 merge/MergeEngine.kt  Merge: the physics solver and the merge rules
+blocks/BlocksModel.kt Blocks: piece shapes, rotation maths, snapshots
+blocks/BlocksEngine.kt Blocks: placement, the adjacency rule, line clears
 data/GameStorage.kt   SharedPreferences persistence, including the in-progress run
 feedback/Haptics.kt   Turns game events into vibration
 GameViewModel.kt      Descent loop, bridges engine to Compose
 MergeViewModel.kt     Merge loop
+BlocksViewModel.kt    Blocks loop
 ui/HomeScreen.kt      The game picker
 ui/                   Compose rendering and input
 ```
@@ -116,6 +125,33 @@ Four details are load-bearing, and each one is guarded by a test:
 Ball radii are a hand-tuned table, not derived. The tempting rule — double the area each
 merge, so radius scales by sqrt(2) — compounds to roughly 45x across the ladder, which no
 phone screen can hold.
+
+## 2048 Blocks
+
+Four-cell pieces fall in the seven classic shapes, but **every cell carries its own
+number**, so which way round a piece lands changes everything and rotation is a real
+decision rather than a fitting exercise.
+
+The governing rule is that **no two equal numbers may share a boundary**. When a
+placement would put two equal values orthogonally adjacent they combine into their
+double, cascading until the rule holds again. Full rows also clear, so there are two
+competing ways to make space — merge upward or fill across.
+
+- **Tap the board to rotate.** Drag to move a column at a time, swipe down to hard drop.
+- Rotation uses a small kick list. Without it a piece flush against a wall simply refuses
+  to turn, which reads as the game ignoring the input.
+- Rotating repositions each cell's number; it never reshuffles which cell holds which.
+  There is a test pinning exactly that, because it is the kind of thing that silently
+  breaks and looks like bad luck.
+- Gravity is **vertical only**. A horizontal merge therefore leaves a hole where the
+  loser was rather than closing the row up — also pinned by a test, since it is a
+  deliberate choice rather than an oversight.
+- Every piece spawns inside rows 0-1 of the middle columns, and the run ends when a new
+  piece will not fit there.
+
+The fuzz test asserts the invariant after **every single placement** across forty
+randomised games: no two equal numbers sharing a boundary, nothing left floating, and no
+full row left uncleared.
 
 ## 2048 Descent rules
 
@@ -208,6 +244,10 @@ Everything balance-related is a constant in `game/Model.kt`:
 | `DANGER_CLEARANCE` | How close to the ceiling the warning appears |
 
 ## Testing
+
+`BlocksEngineTest` covers the shape and rotation maths, values staying attached to their
+cells through a turn, the adjacency rule and its cascades, self-resolving pieces, line
+clears and levelling, wall kicks, the blocked-spawn loss condition, and the fuzz run above.
 
 `MergeEngineTest` covers the bowl geometry, containment under load, tunnelling, rolling
 to the centre, settling, the merge rules and contact slack, combo scoring, the

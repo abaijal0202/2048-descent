@@ -40,7 +40,7 @@ import com.digiboxx.descent2048.ui.theme.tileBackground
 import com.digiboxx.descent2048.ui.theme.tileForeground
 
 /** Which game the app is showing. */
-enum class GameChoice { HOME, DESCENT, MERGE }
+enum class GameChoice { HOME, DESCENT, MERGE, BLOCKS }
 
 /**
  * The launch screen: pick a version of 2048.
@@ -53,6 +53,7 @@ enum class GameChoice { HOME, DESCENT, MERGE }
 fun HomeScreen(
     descentHighScore: Int,
     mergeHighScore: Int,
+    blocksHighScore: Int,
     onChoose: (GameChoice) -> Unit
 ) {
     Box(
@@ -105,6 +106,18 @@ fun HomeScreen(
                 highScore = mergeHighScore,
                 preview = { MergePreview() },
                 onClick = { onChoose(GameChoice.MERGE) }
+            )
+
+            GameCard(
+                title = "2048 BLOCKS",
+                tagline = "Four cells, four numbers.",
+                blurb = "Tetromino shapes where every cell has its own number. " +
+                    "Two equal numbers can never touch — when they do, they combine. " +
+                    "Fill rows to clear them.",
+                accent = TrophyGold,
+                highScore = blocksHighScore,
+                preview = { BlocksPreview() },
+                onClick = { onChoose(GameChoice.BLOCKS) }
             )
         }
     }
@@ -225,6 +238,37 @@ private fun MergePreview() {
                 .clip(RoundedCornerShape(bottomStart = 20.dp, bottomEnd = 20.dp))
                 .background(BgPanel2)
         )
+    }
+}
+
+/** An L-tetromino with a different number per cell, mirroring the Blocks board. */
+@Composable
+private fun BlocksPreview() {
+    val unit = 15.dp
+    Box(modifier = Modifier.size(unit * 3, unit * 2)) {
+        // L shape: (0,2), (1,0), (1,1), (1,2)
+        listOf(
+            Triple(0, 2, 4),
+            Triple(1, 0, 2),
+            Triple(1, 1, 16),
+            Triple(1, 2, 8)
+        ).forEach { (row, col, value) ->
+            Box(
+                modifier = Modifier
+                    .padding(start = unit * col, top = unit * row)
+                    .size(unit)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(tileBackground(value)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    value.toString(),
+                    color = tileForeground(value),
+                    fontSize = 6.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+        }
     }
 }
 

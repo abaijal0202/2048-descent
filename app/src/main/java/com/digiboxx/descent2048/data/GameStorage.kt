@@ -42,6 +42,11 @@ class GameStorage(context: Context) {
         get() = prefs.getInt(KEY_MERGE_BEST_VALUE, 0)
         set(value) = prefs.edit { putInt(KEY_MERGE_BEST_VALUE, value) }
 
+    /** Blocks keeps its own best too, for the same reason Merge does. */
+    var blocksHighScore: Int
+        get() = prefs.getInt(KEY_BLOCKS_HIGH_SCORE, 0)
+        set(value) = prefs.edit { putInt(KEY_BLOCKS_HIGH_SCORE, value) }
+
     var trophyEarned: Boolean
         get() = prefs.getBoolean(KEY_TROPHY, false)
         set(value) = prefs.edit { putBoolean(KEY_TROPHY, value) }
@@ -163,5 +168,6 @@ class GameStorage(context: Context) {
         const val KEY_SAVED_GAME = "saved_game"
         const val KEY_MERGE_HIGH_SCORE = "merge_high_score"
         const val KEY_MERGE_BEST_VALUE = "merge_best_value"
+        const val KEY_BLOCKS_HIGH_SCORE = "blocks_high_score"
     }
 }
