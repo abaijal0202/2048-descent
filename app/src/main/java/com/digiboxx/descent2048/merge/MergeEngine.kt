@@ -446,6 +446,28 @@ class MergeEngine(private val rng: Random = Random.Default) {
         return ((runway - gap) / runway).coerceIn(0f, 0.85f)
     }
 
+    /**
+     * Carry on from a lost position by lifting the highest balls out of the bowl.
+     *
+     * The overflow timer is cleared on everything that survives. Without that, a ball
+     * that had already been sitting over the line for a second would end the run again
+     * almost immediately after the player watched an ad to continue.
+     */
+    fun revive(nowMs: Long, count: Int = MERGE_REVIVE_BALLS): Boolean {
+        if (status != MergeStatus.GAME_OVER) return false
+
+        val lifted = balls.sortedBy { it.y }.take(count).map { it.id }.toSet()
+        balls.removeAll { it.id in lifted }
+        for (ball in balls) ball.overLineMs = 0L
+
+        status = MergeStatus.PLAYING
+        lastUpdateMs = nowMs
+        accumulatorMs = 0f
+        lastDropMs = nowMs - DROP_COOLDOWN_MS
+        markDirty()
+        return true
+    }
+
     private fun drainEvents(): List<MergeEvent> {
         if (pendingEvents.isEmpty()) return emptyList()
         val out = pendingEvents.toList()

@@ -13,6 +13,12 @@ import com.digiboxx.descent2048.game.GameEngine
 import com.digiboxx.descent2048.game.GameEvent
 import com.digiboxx.descent2048.game.GameStatus
 import com.digiboxx.descent2048.game.HudTimers
+import com.digiboxx.descent2048.game.PowerType
+import com.digiboxx.descent2048.monetize.MonetizeHost
+import com.digiboxx.descent2048.monetize.Product
+import com.digiboxx.descent2048.monetize.PurchaseResult
+import com.digiboxx.descent2048.monetize.RewardPlacement
+import com.digiboxx.descent2048.monetize.RewardResult
 import com.digiboxx.descent2048.game.SlideDirection
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -44,6 +50,29 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     var hapticsEnabled: Boolean by mutableStateOf(true)
         private set
+
+
+    /** True while a rewarded ad is on screen, so the UI can disable its buttons. */
+    var adInFlight: Boolean by mutableStateOf(false)
+        private set
+
+    /** True when a rewarded continue can be offered on the game-over screen. */
+    var canContinue: Boolean by mutableStateOf(false)
+        private set
+
+    var adsRemoved: Boolean by mutableStateOf(MonetizeHost.billing.entitlements.adsRemoved)
+        private set
+
+    fun removeAdsPrice(): String? = MonetizeHost.billing.priceLabel(Product.REMOVE_ADS)
+
+    fun buyRemoveAds() {
+        MonetizeHost.billing.purchase(Product.REMOVE_ADS) { result ->
+            if (result == PurchaseResult.PURCHASED || result == PurchaseResult.ALREADY_OWNED) {
+                MonetizeHost.refreshEntitlements()
+                adsRemoved = true
+            }
+        }
+    }
 
     private var scoreCommitted = false
 
@@ -126,6 +155,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     commitScore()
                     // The run is finished; nothing left worth restoring.
                     storage.clearSavedGame()
+                    onRunEnded()
                 }
             }
         }
@@ -156,8 +186,61 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     // ------------------------------------------------------------ intents
 
+    /**
+     * Decide what the player is offered now the run is over.
+     *
+     * The continue offer is computed before the interstitial fires, so the two can never
+     * end up stacked on the same screen.
+     */
+    private fun onRunEnded() {
+        canContinue = MonetizeHost.policy.canOfferContinue(MonetizeHost.ads.rewardedReady)
+        if (MonetizeHost.policy.onGameOver(now())) {
+            MonetizeHost.ads.showInterstitial { MonetizeHost.ads.preload() }
+        }
+    }
+
+    /** Watch a rewarded ad to clear the top of the stack and carry on. */
+    fun continueWithAd() {
+        if (adInFlight || !canContinue) return
+        adInFlight = true
+        MonetizeHost.ads.showRewarded(RewardPlacement.CONTINUE_RUN) { result ->
+            adInFlight = false
+            if (result == RewardResult.EARNED && engine.revive(now())) {
+                MonetizeHost.policy.onContinueGranted()
+                canContinue = false
+                scoreCommitted = false
+                refreshSnapshot()
+            }
+            MonetizeHost.ads.preload()
+        }
+    }
+
+    /** Watch a rewarded ad for one charge of [power]. */
+    fun watchAdForCharge(power: PowerType) {
+        if (adInFlight) return
+        if (!MonetizeHost.policy.canOfferChargeReward(now(), MonetizeHost.ads.rewardedReady)) return
+        adInFlight = true
+        MonetizeHost.ads.showRewarded(RewardPlacement.POWER_CHARGE) { result ->
+            adInFlight = false
+            if (result == RewardResult.EARNED) {
+                engine.grantCharge(power, now())
+                MonetizeHost.policy.onChargeRewardGranted(now())
+                persistPowers()
+                refreshSnapshot()
+            }
+            MonetizeHost.ads.preload()
+        }
+    }
+
+    /** True when a charge reward is worth offering for an empty power. */
+    fun canRewardCharge(): Boolean =
+        MonetizeHost.policy.canOfferChargeReward(now(), MonetizeHost.ads.rewardedReady)
+
     fun startGame() {
         scoreCommitted = false
+        canContinue = false
+        MonetizeHost.policy.onRunStarted()
+        MonetizeHost.ads.preload()
         deleteArmed = false
         storage.clearSavedGame()
         engine = newEngine()

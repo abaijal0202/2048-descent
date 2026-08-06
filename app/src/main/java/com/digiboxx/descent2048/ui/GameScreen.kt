@@ -77,6 +77,9 @@ fun GameScreen(
     onSlide: (SlideDirection) -> Unit,
     onToggleHaptics: () -> Unit,
     currentColumn: () -> Int,
+    canContinue: Boolean,
+    adInFlight: Boolean,
+    onContinue: () -> Unit,
     onBack: () -> Unit
 ) {
     BoxWithConstraints(
@@ -227,8 +230,18 @@ fun GameScreen(
                             if (snapshot.trophies.isNotEmpty()) {
                                 "\nTrophies ${snapshot.trophies.joinToString(", ")}"
                             } else "",
-                        actionLabel = "Play Again",
-                        onAction = onStart
+                        // The rescue leads when it is on offer: it is the only choice
+                        // here that keeps the run the player just built.
+                        actionLabel = when {
+                            adInFlight -> "Loading..."
+                            canContinue -> "Watch ad to continue"
+                            else -> "Play Again"
+                        },
+                        onAction = if (canContinue && !adInFlight) onContinue else onStart,
+                        secondaryLabel = if (canContinue) "Play Again" else null,
+                        onSecondary = if (canContinue) onStart else null,
+                        tertiaryLabel = "Back to games",
+                        onTertiary = onBack
                     )
                     GameStatus.PLAYING, GameStatus.PLANNING -> Unit
                 }

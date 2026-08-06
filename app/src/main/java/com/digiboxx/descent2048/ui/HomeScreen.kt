@@ -54,6 +54,9 @@ fun HomeScreen(
     descentHighScore: Int,
     mergeHighScore: Int,
     blocksHighScore: Int,
+    removeAdsPrice: String?,
+    adsRemoved: Boolean,
+    onRemoveAds: () -> Unit,
     onChoose: (GameChoice) -> Unit
 ) {
     Box(
@@ -119,6 +122,32 @@ fun HomeScreen(
                 preview = { BlocksPreview() },
                 onClick = { onChoose(GameChoice.BLOCKS) }
             )
+
+            // One store entry point for the whole app rather than a copy buried in each
+            // game's pause menu.
+            if (adsRemoved) {
+                Text(
+                    text = "ADS REMOVED · THANK YOU",
+                    color = TrophyGold,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            } else if (removeAdsPrice != null) {
+                Text(
+                    text = "Remove ads · $removeAdsPrice",
+                    color = AccentCyan,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(BgPanel2)
+                        .pointerInput(Unit) { detectTapGestures { onRemoveAds() } }
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .semantics {
+                            contentDescription = "Remove ads for $removeAdsPrice"
+                        }
+                )
+            }
         }
     }
 }

@@ -55,6 +55,21 @@ data class PowerBank(
         return current
     }
 
+    /**
+     * Add one charge without touching the regeneration timer.
+     *
+     * Used by the rewarded-video grant. The timer is deliberately left alone: a reward
+     * should top the bank up, not reset progress toward the charge already on its way.
+     */
+    fun grant(): PowerBank {
+        if (charges >= POWER_MAX_CHARGES) return this
+        val granted = charges + 1
+        return copy(
+            charges = granted,
+            nextRegenAtMs = if (granted >= POWER_MAX_CHARGES) null else nextRegenAtMs
+        )
+    }
+
     /** Milliseconds until the next charge, or 0 when full or already due. */
     fun regenRemainingMs(nowMs: Long): Long {
         val target = nextRegenAtMs ?: return 0L

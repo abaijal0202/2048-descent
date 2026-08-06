@@ -23,6 +23,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.digiboxx.descent2048.data.GameStorage
+import com.digiboxx.descent2048.monetize.MonetizeHost
 import com.digiboxx.descent2048.ui.GameChoice
 import com.digiboxx.descent2048.ui.BlocksScreen
 import com.digiboxx.descent2048.ui.GameScreen
@@ -42,6 +43,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        // With no SDK configured this leaves the app unmonetised, which is a valid
+        // shipping state. Release builds never get the simulated gateway.
+        MonetizeHost.install(applicationContext, BuildConfig.DEBUG)
         setContent {
             Descent2048Theme {
                 Surface(
@@ -114,6 +118,11 @@ private fun AppRoot(
                 descentHighScore = storage.highScore,
                 mergeHighScore = storage.mergeHighScore,
                 blocksHighScore = storage.blocksHighScore,
+                removeAdsPrice = MonetizeHost.billing.priceLabel(
+                    com.digiboxx.descent2048.monetize.Product.REMOVE_ADS
+                ),
+                adsRemoved = descent.adsRemoved || MonetizeHost.billing.entitlements.adsRemoved,
+                onRemoveAds = descent::buyRemoveAds,
                 onChoose = { choiceOrdinal = it.ordinal }
             )
         }
@@ -139,6 +148,9 @@ private fun AppRoot(
             onSlide = descent::slide,
             onToggleHaptics = descent::toggleHaptics,
             currentColumn = descent::fallingColumn,
+            canContinue = descent.canContinue,
+            adInFlight = descent.adInFlight,
+            onContinue = descent::continueWithAd,
             onBack = {
                 descent.pause()
                 choiceOrdinal = GameChoice.HOME.ordinal
@@ -155,6 +167,9 @@ private fun AppRoot(
             onAim = merge::aimAt,
             onDrop = merge::drop,
             onToggleHaptics = merge::toggleHaptics,
+            canContinue = merge.canContinue,
+            adInFlight = merge.adInFlight,
+            onContinue = merge::continueWithAd,
             onBack = {
                 merge.pause()
                 choiceOrdinal = GameChoice.HOME.ordinal
@@ -173,6 +188,9 @@ private fun AppRoot(
             onHardDrop = blocks::hardDrop,
             onSoftDrop = blocks::setSoftDrop,
             onToggleHaptics = blocks::toggleHaptics,
+            canContinue = blocks.canContinue,
+            adInFlight = blocks.adInFlight,
+            onContinue = blocks::continueWithAd,
             onBack = {
                 blocks.pause()
                 choiceOrdinal = GameChoice.HOME.ordinal

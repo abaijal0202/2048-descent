@@ -367,6 +367,46 @@ class BlocksEngine(private val rng: Random = Random.Default) {
         }
     }
 
+    // ---------------------------------------------------------------- continuing
+
+    /**
+     * Carry on from a lost position by clearing the top of the stack.
+     *
+     * Keeps clearing until a piece can actually spawn, so a revive never hands back a
+     * board that ends the run again immediately.
+     */
+    fun revive(nowMs: Long, rows: Int = BLOCK_REVIVE_ROWS): Boolean {
+        if (status != BlocksStatus.GAME_OVER) return false
+
+        repeat(rows) { clearHighestOccupiedRow() }
+        resolveBoard(nowMs)
+
+        var guard = 0
+        while (guard++ < BLOCK_ROWS && !canSpawn()) {
+            if (!clearHighestOccupiedRow()) break
+            resolveBoard(nowMs)
+        }
+        if (!canSpawn()) return false
+
+        status = BlocksStatus.PLAYING
+        lastStepMs = nowMs
+        spawnNext()
+        markDirty()
+        return status == BlocksStatus.PLAYING
+    }
+
+    /** True when the piece at the head of the queue would fit at its spawn position. */
+    private fun canSpawn(): Boolean = queue.firstOrNull()?.let { !collides(it) } ?: true
+
+    private fun clearHighestOccupiedRow(): Boolean {
+        for (row in 0 until BLOCK_ROWS) {
+            if ((0 until BLOCK_COLS).none { grid[row][it] != null }) continue
+            for (col in 0 until BLOCK_COLS) grid[row][col] = null
+            return true
+        }
+        return false
+    }
+
     // ---------------------------------------------------------------- rendering
 
     /** Empty rows above the highest settled tile. */

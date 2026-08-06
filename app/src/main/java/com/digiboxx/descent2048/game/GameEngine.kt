@@ -670,6 +670,57 @@ class GameEngine(
         return changed
     }
 
+    /**
+     * Carry on from a lost position by clearing the top of the stack.
+     *
+     * Clears [rows] of the highest occupied rows, then keeps taking the highest one until
+     * the spawn cell is actually free — otherwise a revive can hand the player a board
+     * that ends the run again on the very next spawn.
+     */
+    fun revive(nowMs: Long, rows: Int = REVIVE_ROWS): Boolean {
+        if (status != GameStatus.GAME_OVER) return false
+
+        repeat(rows) { clearHighestOccupiedRow() }
+        var guard = 0
+        while (grid[0][START_COL] != null && guard++ < ROWS) {
+            if (!clearHighestOccupiedRow()) break
+        }
+        resolveBoard(null, nowMs)
+        if (grid[0][START_COL] != null) return false
+
+        status = GameStatus.PLAYING
+        lastStepMs = nowMs
+        spawnNext()
+        markDirty()
+        return status == GameStatus.PLAYING
+    }
+
+    /** Empties the topmost row holding anything that is not a trophy. */
+    private fun clearHighestOccupiedRow(): Boolean {
+        for (row in 0 until ROWS) {
+            val hasLoose = (0 until COLS).any { col ->
+                val tile = grid[row][col]
+                tile != null && !tile.locked
+            }
+            if (!hasLoose) continue
+            for (col in 0 until COLS) {
+                if (grid[row][col]?.locked != true) grid[row][col] = null
+            }
+            return true
+        }
+        return false
+    }
+
+    /** Add a charge to a power, for the rewarded-video grant. */
+    fun grantCharge(power: PowerType, nowMs: Long) {
+        when (power) {
+            PowerType.DELETE_ROW -> deleteBank = deleteBank.refresh(nowMs).grant()
+            PowerType.SLOW -> slowBank = slowBank.refresh(nowMs).grant()
+            PowerType.PLAN -> planBank = planBank.refresh(nowMs).grant()
+        }
+        markDirty()
+    }
+
     fun useSlow(nowMs: Long): Boolean {
         if (status != GameStatus.PLAYING) return false
         slowBank = slowBank.refresh(nowMs)

@@ -91,7 +91,10 @@ fun BlocksScreen(
     onRotate: () -> Unit,
     onHardDrop: () -> Unit,
     onSoftDrop: (Boolean) -> Unit,
-    onToggleHaptics: () -> Unit
+    onToggleHaptics: () -> Unit,
+    canContinue: Boolean,
+    adInFlight: Boolean,
+    onContinue: () -> Unit
 ) {
     BoxWithConstraints(
         modifier = Modifier
@@ -174,8 +177,14 @@ fun BlocksScreen(
                         title = "Game Over",
                         body = "Score ${snapshot.score} · Lines ${snapshot.lines} · " +
                             "Best block ${snapshot.bestValue}",
-                        actionLabel = "Play Again",
-                        onAction = onStart,
+                        actionLabel = when {
+                            adInFlight -> "Loading..."
+                            canContinue -> "Watch ad to continue"
+                            else -> "Play Again"
+                        },
+                        onAction = if (canContinue && !adInFlight) onContinue else onStart,
+                        secondaryLabel = if (canContinue) "Play Again" else null,
+                        onSecondary = if (canContinue) onStart else null,
                         tertiaryLabel = "Back to games",
                         onTertiary = onBack
                     )

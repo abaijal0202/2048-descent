@@ -12,6 +12,11 @@ import com.digiboxx.descent2048.blocks.BlocksSnapshot
 import com.digiboxx.descent2048.blocks.BlocksStatus
 import com.digiboxx.descent2048.data.GameStorage
 import com.digiboxx.descent2048.feedback.Haptics
+import com.digiboxx.descent2048.monetize.MonetizeHost
+import com.digiboxx.descent2048.monetize.Product
+import com.digiboxx.descent2048.monetize.PurchaseResult
+import com.digiboxx.descent2048.monetize.RewardPlacement
+import com.digiboxx.descent2048.monetize.RewardResult
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -31,6 +36,29 @@ class BlocksViewModel(application: Application) : AndroidViewModel(application) 
 
     var hapticsEnabled: Boolean by mutableStateOf(true)
         private set
+
+
+    /** True while a rewarded ad is on screen, so the UI can disable its buttons. */
+    var adInFlight: Boolean by mutableStateOf(false)
+        private set
+
+    /** True when a rewarded continue can be offered on the game-over screen. */
+    var canContinue: Boolean by mutableStateOf(false)
+        private set
+
+    var adsRemoved: Boolean by mutableStateOf(MonetizeHost.billing.entitlements.adsRemoved)
+        private set
+
+    fun removeAdsPrice(): String? = MonetizeHost.billing.priceLabel(Product.REMOVE_ADS)
+
+    fun buyRemoveAds() {
+        MonetizeHost.billing.purchase(Product.REMOVE_ADS) { result ->
+            if (result == PurchaseResult.PURCHASED || result == PurchaseResult.ALREADY_OWNED) {
+                MonetizeHost.refreshEntitlements()
+                adsRemoved = true
+            }
+        }
+    }
 
     private var scoreCommitted = false
     private var lastRevision = -1
@@ -73,6 +101,11 @@ class BlocksViewModel(application: Application) : AndroidViewModel(application) 
                 is BlocksEvent.GameOver -> {
                     haptics.gameOver()
                     commitScore()
+                    canContinue =
+                        MonetizeHost.policy.canOfferContinue(MonetizeHost.ads.rewardedReady)
+                    if (MonetizeHost.policy.onGameOver(now())) {
+                        MonetizeHost.ads.showInterstitial { MonetizeHost.ads.preload() }
+                    }
                 }
             }
         }
@@ -89,8 +122,27 @@ class BlocksViewModel(application: Application) : AndroidViewModel(application) 
 
     // ------------------------------------------------------------ intents
 
+    /** Watch a rewarded ad to clear the top of the stack and carry on. */
+    fun continueWithAd() {
+        if (adInFlight || !canContinue) return
+        adInFlight = true
+        MonetizeHost.ads.showRewarded(RewardPlacement.CONTINUE_RUN) { result ->
+            adInFlight = false
+            if (result == RewardResult.EARNED && engine.revive(now())) {
+                MonetizeHost.policy.onContinueGranted()
+                canContinue = false
+                scoreCommitted = false
+                refresh()
+            }
+            MonetizeHost.ads.preload()
+        }
+    }
+
     fun startGame() {
         scoreCommitted = false
+        canContinue = false
+        MonetizeHost.policy.onRunStarted()
+        MonetizeHost.ads.preload()
         engine.start(now())
         refresh()
     }

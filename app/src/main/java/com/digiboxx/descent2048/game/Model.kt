@@ -77,6 +77,15 @@ const val TROPHY_SCORE_BONUS = 0.5
 const val COMBO_STEP = 0.5
 const val MAX_COMBO_MULTIPLIER = 4.0
 
+/**
+ * Rows of stack removed by a rewarded continue.
+ *
+ * Taken from the top of the pile rather than the bottom, for the same reason Delete Row
+ * is player-targeted: the floor is where the large tiles live, and a revive that razes
+ * your foundation is not much of a rescue.
+ */
+const val REVIVE_ROWS = 3
+
 /** At or below this many empty rows above the spawn column, the UI warns the player. */
 const val DANGER_CLEARANCE = 3
 

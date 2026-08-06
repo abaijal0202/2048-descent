@@ -86,7 +86,10 @@ fun MergeScreen(
     onResume: () -> Unit,
     onAim: (Float) -> Unit,
     onDrop: () -> Unit,
-    onToggleHaptics: () -> Unit
+    onToggleHaptics: () -> Unit,
+    canContinue: Boolean,
+    adInFlight: Boolean,
+    onContinue: () -> Unit
 ) {
     BoxWithConstraints(
         modifier = Modifier
@@ -154,8 +157,14 @@ fun MergeScreen(
                         modifier = Modifier.matchParentSize(),
                         title = "Overflowed",
                         body = "Score ${snapshot.score} · Best ball ${snapshot.bestValue}",
-                        actionLabel = "Play Again",
-                        onAction = onStart,
+                        actionLabel = when {
+                            adInFlight -> "Loading..."
+                            canContinue -> "Watch ad to continue"
+                            else -> "Play Again"
+                        },
+                        onAction = if (canContinue && !adInFlight) onContinue else onStart,
+                        secondaryLabel = if (canContinue) "Play Again" else null,
+                        onSecondary = if (canContinue) onStart else null,
                         tertiaryLabel = "Back to games",
                         onTertiary = onBack
                     )

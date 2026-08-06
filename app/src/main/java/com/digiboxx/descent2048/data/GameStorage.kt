@@ -47,6 +47,11 @@ class GameStorage(context: Context) {
         get() = prefs.getInt(KEY_BLOCKS_HIGH_SCORE, 0)
         set(value) = prefs.edit { putInt(KEY_BLOCKS_HIGH_SCORE, value) }
 
+    /** Set once the remove-ads product is owned. */
+    var adsRemoved: Boolean
+        get() = prefs.getBoolean(KEY_ADS_REMOVED, false)
+        set(value) = prefs.edit { putBoolean(KEY_ADS_REMOVED, value) }
+
     var trophyEarned: Boolean
         get() = prefs.getBoolean(KEY_TROPHY, false)
         set(value) = prefs.edit { putBoolean(KEY_TROPHY, value) }
@@ -169,5 +174,6 @@ class GameStorage(context: Context) {
         const val KEY_MERGE_HIGH_SCORE = "merge_high_score"
         const val KEY_MERGE_BEST_VALUE = "merge_best_value"
         const val KEY_BLOCKS_HIGH_SCORE = "blocks_high_score"
+        const val KEY_ADS_REMOVED = "ads_removed"
     }
 }

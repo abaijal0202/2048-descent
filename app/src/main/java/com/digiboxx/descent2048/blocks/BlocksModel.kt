@@ -49,6 +49,9 @@ val BLOCK_SPAWN_TABLE: List<Pair<Int, Int>> = listOf(
     2 to 40, 4 to 30, 8 to 18, 16 to 8, 32 to 4
 )
 
+/** Rows of stack removed by a rewarded continue, taken from the top of the pile. */
+const val BLOCK_REVIVE_ROWS = 4
+
 /** The value that counts as beating the game. Play continues past it. */
 const val BLOCK_TARGET = 2048
 

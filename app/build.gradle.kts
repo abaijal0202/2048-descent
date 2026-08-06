@@ -45,6 +45,9 @@ android {
 
     buildFeatures {
         compose = true
+        // Needed for BuildConfig.DEBUG, which gates the simulated ad gateway so a
+        // release build can never ship free rewards.
+        buildConfig = true
     }
 
     packaging {

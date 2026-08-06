@@ -12,6 +12,11 @@ import com.digiboxx.descent2048.merge.MergeEngine
 import com.digiboxx.descent2048.merge.MergeEvent
 import com.digiboxx.descent2048.merge.MergeSnapshot
 import com.digiboxx.descent2048.merge.MergeStatus
+import com.digiboxx.descent2048.monetize.MonetizeHost
+import com.digiboxx.descent2048.monetize.Product
+import com.digiboxx.descent2048.monetize.PurchaseResult
+import com.digiboxx.descent2048.monetize.RewardPlacement
+import com.digiboxx.descent2048.monetize.RewardResult
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -37,6 +42,29 @@ class MergeViewModel(application: Application) : AndroidViewModel(application) {
 
     var hapticsEnabled: Boolean by mutableStateOf(true)
         private set
+
+
+    /** True while a rewarded ad is on screen, so the UI can disable its buttons. */
+    var adInFlight: Boolean by mutableStateOf(false)
+        private set
+
+    /** True when a rewarded continue can be offered on the game-over screen. */
+    var canContinue: Boolean by mutableStateOf(false)
+        private set
+
+    var adsRemoved: Boolean by mutableStateOf(MonetizeHost.billing.entitlements.adsRemoved)
+        private set
+
+    fun removeAdsPrice(): String? = MonetizeHost.billing.priceLabel(Product.REMOVE_ADS)
+
+    fun buyRemoveAds() {
+        MonetizeHost.billing.purchase(Product.REMOVE_ADS) { result ->
+            if (result == PurchaseResult.PURCHASED || result == PurchaseResult.ALREADY_OWNED) {
+                MonetizeHost.refreshEntitlements()
+                adsRemoved = true
+            }
+        }
+    }
 
     private var scoreCommitted = false
     private var lastRevision = -1
@@ -77,6 +105,11 @@ class MergeViewModel(application: Application) : AndroidViewModel(application) {
                 is MergeEvent.GameOver -> {
                     haptics.gameOver()
                     commitScore()
+                    canContinue =
+                        MonetizeHost.policy.canOfferContinue(MonetizeHost.ads.rewardedReady)
+                    if (MonetizeHost.policy.onGameOver(now())) {
+                        MonetizeHost.ads.showInterstitial { MonetizeHost.ads.preload() }
+                    }
                 }
             }
         }
@@ -94,8 +127,27 @@ class MergeViewModel(application: Application) : AndroidViewModel(application) {
 
     // ------------------------------------------------------------ intents
 
+    /** Watch a rewarded ad to lift the top of the pile out and carry on. */
+    fun continueWithAd() {
+        if (adInFlight || !canContinue) return
+        adInFlight = true
+        MonetizeHost.ads.showRewarded(RewardPlacement.CONTINUE_RUN) { result ->
+            adInFlight = false
+            if (result == RewardResult.EARNED && engine.revive(now())) {
+                MonetizeHost.policy.onContinueGranted()
+                canContinue = false
+                scoreCommitted = false
+                refresh()
+            }
+            MonetizeHost.ads.preload()
+        }
+    }
+
     fun startGame() {
         scoreCommitted = false
+        canContinue = false
+        MonetizeHost.policy.onRunStarted()
+        MonetizeHost.ads.preload()
         engine.start(now())
         refresh()
     }

@@ -118,6 +118,9 @@ const val COMBO_WINDOW_MS = 450L
 const val COMBO_STEP = 0.5
 const val MAX_COMBO_MULTIPLIER = 4.0
 
+/** Balls lifted out of the bowl by a rewarded continue, taken from the top. */
+const val MERGE_REVIVE_BALLS = 6
+
 /** The value that counts as beating the game. Play continues past it. */
 const val MERGE_TARGET = 2048
 
